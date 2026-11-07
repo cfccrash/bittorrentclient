@@ -1,0 +1,48 @@
+name: Build Windows installer
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pyinstaller
+      - name: Self-test
+        run: python test_local.py
+      - name: Build the program folder
+        run: python -m PyInstaller --noconfirm --clean --onedir --windowed --icon BitTorrentClient.ico --name BitTorrentClient bittorrentclient.py
+      - name: Bundle libmpv (the repository copy if there is one, otherwise download it)
+        shell: pwsh
+        run: |
+          foreach ($n in "libmpv-2.dll","mpv-2.dll") { if (Test-Path $n) { Copy-Item $n dist\BitTorrentClient\ } }
+          if (-not (Test-Path dist\BitTorrentClient\libmpv-2.dll) -and -not (Test-Path dist\BitTorrentClient\mpv-2.dll)) {
+            python libmpv_get.py dist\BitTorrentClient
+          }
+      - name: Make sure Inno Setup is available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $ver = python -c "from version import VERSION; print(VERSION)"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = (Get-Command iscc).Source }
+          & $iscc installer.iss "/DMyAppVersion=$ver"
+      - name: Zip the portable program folder
+        shell: pwsh
+        run: Compress-Archive -Path dist\BitTorrentClient\* -DestinationPath BitTorrentClient-portable.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BitTorrentClient-windows
+          path: |
+            installer/*.exe
+            BitTorrentClient-portable.zip

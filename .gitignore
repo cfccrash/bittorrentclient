@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+dist/
+installer/
+*.spec
+*.zip
+libmpv-2.dll
+mpv-2.dll
+.venv/
