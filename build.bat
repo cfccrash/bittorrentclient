@@ -2,7 +2,7 @@
 REM Builds the Windows installer:  installer\BitTorrentClient-Setup-<version>.exe
 REM Also leaves dist\BitTorrentClient\BitTorrentClient.exe (the program folder the installer packages).
 REM Needs Python 3.10+ from python.org (tick "Add python.exe to PATH" and keep the tcl/tk option ticked).
-REM Inno Setup 6 builds the installer; this script installs it for you with winget if it is missing.
+REM Inno Setup (7 or 6) builds the installer; this script installs it for you with winget if it is missing.
 cd /d "%~dp0"
 where py >nul 2>nul && (set PY=py) || (set PY=python)
 for /f %%v in ('%PY% -c "from version import VERSION; print(VERSION)"') do set VER=%%v
@@ -26,7 +26,7 @@ if not defined ISCC (
 )
 if not defined ISCC (
   echo.
-  echo The program was built, but the installer needs Inno Setup 6.
+  echo The program was built, but the installer needs Inno Setup 6 or 7.
   echo Install it from https://jrsoftware.org/isdl.php then run build.bat again.
   echo The program itself is in dist\BitTorrentClient\BitTorrentClient.exe
   pause
@@ -40,7 +40,8 @@ exit /b 0
 
 :findiscc
 set ISCC=
-for %%p in ("%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" "%ProgramFiles%\Inno Setup 6\ISCC.exe" "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe") do if exist %%p set ISCC=%%~p
+REM the last match wins, so 7 is preferred to 6 (7 installs to Program Files, 6 to Program Files (x86), per-user to LOCALAPPDATA)
+for %%v in (6 7) do for %%p in ("%ProgramFiles(x86)%\Inno Setup %%v\ISCC.exe" "%ProgramFiles%\Inno Setup %%v\ISCC.exe" "%LOCALAPPDATA%\Programs\Inno Setup %%v\ISCC.exe") do if exist %%p set ISCC=%%~p
 if not defined ISCC for /f "delims=" %%i in ('where ISCC 2^>nul') do set ISCC=%%i
 exit /b 0
 
