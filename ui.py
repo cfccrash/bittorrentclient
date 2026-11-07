@@ -227,15 +227,15 @@ def style_ttk(root, P, F, px):
 class ToolButton(tk.Frame):
     """Flat toolbar button: icon + label, hover/pressed/disabled states, optional accent colour."""
 
-    def __init__(self, master, fonts, icon, text, command, accent=False, pady=8):
+    def __init__(self, master, fonts, icon, text, command, accent=False, pady=8, raised=False):
         super().__init__(master, cursor="hand2", bd=0, highlightthickness=0)
-        self.command, self.accent = command, accent
+        self.command, self.accent, self.raised = command, accent, raised   # raised: a visible button face at rest
         self.enabled, self._hover, self._down, self.P = True, False, False, None
         self.icon = tk.Label(self, text=icon, font=fonts.icon, bd=0) if (icon and fonts.has_icons) else None
         self.label = tk.Label(self, text=text, font=fonts.ui, bd=0)
         if self.icon:
             self.icon.pack(side="left", padx=(12, 6), pady=pady)
-        self.label.pack(side="left", padx=(0 if self.icon else 14, 14), pady=pady)
+        self.label.pack(side="left", padx=(0 if self.icon else 14, 14 if text or not self.icon else 6), pady=pady)
         for w in (self, self.label, self.icon):
             if w is not None:
                 w.bind("<Enter>", self._enter)
@@ -261,6 +261,9 @@ class ToolButton(tk.Frame):
             bg, fg = P["surface"], P["disabled"]
         elif self.accent:
             bg, fg = (P["accent_hover"] if (self._hover or self._down) else P["accent"]), P["accent_fg"]
+        elif self.raised:              # like the sidebar buttons: a lighter face, lighter still when pointed at
+            bg = P["sel"] if self._down else P["press"] if self._hover else P["hover"]
+            fg = P["fg"]
         else:
             bg = P["press"] if self._down else P["hover"] if self._hover else P["surface"]
             fg = P["fg"]

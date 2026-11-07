@@ -356,8 +356,8 @@ class App:
         self._frame(self.root, "border", height=1).pack(fill="x", side=side)
 
     # -- layout -----------------------------------------------------------
-    def _tool(self, parent, key, icon, text, cmd, tip, accent=False, pady=8):
-        b = ToolButton(parent, self.F, icon, text, cmd, accent, pady=self.px(pady) if pady != 8 else pady)
+    def _tool(self, parent, key, icon, text, cmd, tip, accent=False, pady=8, raised=False):
+        b = ToolButton(parent, self.F, icon, text, cmd, accent, pady=self.px(pady) if pady != 8 else pady, raised=raised)
         Tooltip(b, tip, lambda: self.P)
         self.btn[key] = b
         return b
@@ -365,23 +365,32 @@ class App:
     def _build_toolbar(self):
         bar = self._frame(self.root, "surface")
         bar.pack(fill="x")
-        inner = self._frame(bar, "surface")
-        inner.pack(fill="x", padx=12, pady=8)
         self.btn = {}
+        # Left part: exactly as wide as the sidebar below, ending in the same dividing line, so the app's own
+        # buttons sit over the sidebar and the torrent actions start where the list starts.
+        left = self._frame(bar, "surface", width=self.px(176))
+        left.pack(side="left", fill="y")
+        left.pack_propagate(False)
+        lrow = self._frame(left, "surface")
+        lrow.pack(side="left", padx=(self.px(8), 0))
+        self._frame(bar, "border", width=1).pack(side="left", fill="y")     # continues the sidebar's column line
+        inner = self._frame(bar, "surface")
+        inner.pack(side="left", fill="x", expand=True, padx=(self.px(8), 12), pady=8)
 
-        def add(key, icon, text, cmd, tip):
-            self._tool(inner, key, icon, text, cmd, tip).pack(side="left", padx=(0, 4))
+        def add(key, icon, text, cmd, tip, parent=inner, raised=False):
+            self._tool(parent, key, icon, text, cmd, tip, raised=raised).pack(side="left", padx=(0, 4))
 
         def sep():
             self._frame(inner, "border", width=1).pack(side="left", fill="y", padx=10, pady=6)
 
-        # the very top left: exit / restart (icon only), then Settings
+        # over the sidebar: exit / restart (icon only), and Settings as a raised button
         add("exit", ui.ICON_EXIT, "" if self.F.has_icons else "Exit", self.exit_app,
-            "Exit Bit Torrent Client completely (the window's close button only hides it to the tray)")
-        add("restart", ui.ICON_RESTART, "" if self.F.has_icons else "Restart", self.restart, "Restart Bit Torrent Client")
-        sep()
-        add("settings", ui.ICON_SETTINGS, "" if self.F.has_icons else "Settings", self.settings_dialog, "Settings: speed limits, encryption, network, theme")
-        sep()
+            "Exit Bit Torrent Client completely (the window's close button only hides it to the tray)", parent=lrow)
+        add("restart", ui.ICON_RESTART, "" if self.F.has_icons else "Restart", self.restart, "Restart Bit Torrent Client",
+            parent=lrow)
+        add("settings", ui.ICON_SETTINGS, "" if self.F.has_icons else "Settings", self.settings_dialog,
+            "Settings: speed limits, encryption, network, theme", parent=lrow, raised=True)
+        # over the list: actions on the selected torrents
         add("resume", ui.ICON_PLAY, "Resume", self.resume, "Resume the selected torrents")
         add("pause", ui.ICON_PAUSE, "Pause", self.pause, "Pause the selected torrents  (Space)")
         add("remove", ui.ICON_DELETE, "Remove", self.remove, "Remove the selected torrents  (Delete)")

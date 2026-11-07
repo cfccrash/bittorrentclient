@@ -387,3 +387,6 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.23
 - Updating now replaces the program's runtime folder completely instead of copying over it, so files an older version installed but a newer one no longer uses are removed (for example, graphics-library files from 1.9.21 were still lying next to the newer ones). Your settings and torrents are not in that folder and are not touched.
+
+### 1.9.24
+- **Toolbar lines up with the window below it:** Exit, Restart and Settings sit over the sidebar (Settings is now a proper button), a dividing line continues the sidebar's edge, and Resume / Pause / Remove / Files / Open folder start where the torrent list starts.
