@@ -395,3 +395,7 @@ downloaded yet waits for it instead of failing.
 - **Windows Snap works with the Aurora title bar:** hover the maximise button for Snap Layouts (Windows 11), drag the title bar to a screen edge or corner, use Win + arrow keys, or double-click the title bar - the window now behaves like any other. It also resizes from its edges natively. (The main window keeps a real Windows frame behind the Aurora strip instead of being a borderless window.)
 - The window can be made small enough to sit side by side with another window, or in a quarter of the screen.
 - The left column is only as wide as its buttons need, and the Exit / Restart / Settings buttons above it are spread evenly across it.
+
+### 1.9.26
+- **Snap really works now** (1.9.25 did not): dragging the title bar to a screen edge or corner snaps the window, double-click maximises / restores, the edges resize it, and hovering the maximise button is answered like a standard Windows maximise button (Snap Layouts). Moving the window no longer flickers or leaves a ghost trail - Windows moves it itself.
+- Pressing Alt on its own no longer makes the window stop responding until a click.

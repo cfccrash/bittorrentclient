@@ -86,7 +86,7 @@ class Chrome:
         self.bar.bind("<Double-Button-1>", self._double)
         win.bind("<Alt-F4>", lambda e: self.close())
         self.grips = []
-        if resizable and not self.native:                              # a native frame resizes from its own edges
+        if resizable:                                                  # native frame: the grips start Windows' own resize
             self._make_grips()
         self._press_info = None
         win.after(30, self._after_map)
@@ -173,10 +173,18 @@ class Chrome:
         if name:
             self._press_info = ("btn", name)
             return
+        if self.native and not self.full:          # Windows takes over once the mouse really moves (see _drag)
+            self._press_info = ("native", e.x_root, e.y_root)
+            return
         self._press_info = ("drag", e.x_root, e.y_root, self.win.winfo_x(), self.win.winfo_y())
 
     def _drag(self, e):
         info = self._press_info
+        if info and info[0] == "native":           # past the drag threshold: Windows moves it (snapping, no trail)
+            if self.native.past_drag_threshold(e.x_root - info[1], e.y_root - info[2]):
+                self._press_info = None
+                self.native.begin_move(info[1], info[2])
+            return
         if not info or info[0] != "drag" or self.full:
             return
         _k, sx, sy, wx, wy = info
@@ -300,6 +308,10 @@ class Chrome:
                 g.lift()
 
     def _rs_start(self, e, edge):
+        if self.native:                            # Windows' resize loop (snap-aware, no redraw trail)
+            self._rs = None
+            self.native.begin_resize(edge, e.x_root, e.y_root)
+            return
         w = self.win
         self._rs = (edge, e.x_root, e.y_root, w.winfo_x(), w.winfo_y(), w.winfo_width(), w.winfo_height())
 
@@ -394,11 +406,19 @@ class NativeFrame:
         u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
         u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
         u.GetSystemMetrics.argtypes = [ctypes.c_int]
+        u.SendMessageW.restype = LRESULT
+        u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        u.ReleaseCapture.argtypes = []
+        u.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        u.GetDoubleClickTime.restype = wintypes.UINT
+        self._child_old = {}
         win = self.c.win
         self.hwnd = u.GetParent(win.winfo_id()) or win.winfo_id()
         self._proc = self.WNDPROC(self._wndproc)                      # keep a reference: freed callbacks crash
         self._old = u.SetWindowLongPtrW(self.hwnd, -4, self.ct.cast(self._proc, ctypes.c_void_p))   # GWLP_WNDPROC
         u.SetWindowPos(self.hwnd, None, 0, 0, 0, 0, 0x0027)            # SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER
+        # the strip canvas and the toplevel's client window sit between the pointer and the frame
+        self._pass_through([h for h in (self.c.bar.winfo_id(), win.winfo_id()) if h and h != self.hwnd])
         try:
             dwm = ctypes.windll.dwmapi
             v = ctypes.c_int(2)
@@ -411,7 +431,63 @@ class NativeFrame:
         if self.hwnd:
             self.u.ShowWindow(self.hwnd, cmd)
             self.c.maxed = bool(self.u.IsZoomed(self.hwnd))
+            self.c._grips_visible(not self.c.maxed)
             self.c.draw()
+
+    # -- moving / resizing through Windows' own loops (what a real title bar / border does)
+    def _nc_down(self, ht, x, y):
+        """Start Windows' own move (HTCAPTION) or size (edge code) loop. Posted, not sent: the Tk click handler returns
+        first and Windows runs the loop from the normal message queue. (Sending WM_NCLBUTTONDOWN from inside the Tk
+        handler nested the loop in the callback and it never saw the button go up.)"""
+        if not self.hwnd:
+            return
+        self.u.ReleaseCapture()                                       # Tk holds the mouse after a press
+        if ht == self.HTCAPTION:
+            sc = 0xF012                                                # SC_MOVE | HTCAPTION: move with the mouse
+        else:
+            sc = 0xF000 | {10: 1, 11: 2, 12: 3, 13: 4, 14: 5, 15: 6, 16: 7, 17: 8}[ht]   # SC_SIZE | WMSZ_* edge
+        self.u.PostMessageW(self.hwnd, 0x0112, sc, ((y & 0xFFFF) << 16) | (x & 0xFFFF))   # WM_SYSCOMMAND
+
+    def past_drag_threshold(self, dx, dy):
+        g = self.u.GetSystemMetrics
+        return abs(dx) > g(68) or abs(dy) > g(69)                     # SM_CXDRAG / SM_CYDRAG
+
+    def begin_move(self, x, y):
+        """Windows moves the window from here on (snapping to edges and corners, Snap Assist, no redraw trail)."""
+        self._nc_down(self.HTCAPTION, x, y)
+
+    def begin_resize(self, edge, x, y):
+        ht = {"w": 10, "e": 11, "n": 12, "nw": 13, "ne": 14, "s": 15, "sw": 16, "se": 17}[edge]
+        self._nc_down(ht, x, y)
+
+    # -- Snap Layouts: the strip's own windows let the hit test through over our maximise button
+    def _pass_through(self, hwnds):
+        """Every Tk widget is a child window, and Windows asks the window under the pointer first. Over our maximise
+        button the strip canvas and the toplevel's client window answer HTTRANSPARENT, so the question reaches the
+        frame, which answers HTMAXBUTTON - that is what makes Windows 11 show the Snap Layouts flyout."""
+        self._child_procs = []
+        for h in hwnds:
+            def proc(hwnd, msg, wp, lp, _h=h):
+                try:
+                    if msg == 0x0084 and self._over_max(lp):
+                        return -1                                      # HTTRANSPARENT
+                except Exception:
+                    pass
+                return self.u.CallWindowProcW(self._child_old[_h], hwnd, msg, wp, lp)
+            cb = self.WNDPROC(proc)
+            self._child_procs.append(cb)
+            self._child_old[h] = self.u.SetWindowLongPtrW(h, -4, self.ct.cast(cb, self.ct.c_void_p))
+
+    def _over_max(self, lp):
+        ct, wt, u = self.ct, self.wt, self.u
+        x, y = ct.c_short(lp & 0xFFFF).value, ct.c_short((lp >> 16) & 0xFFFF).value
+        pt = wt.POINT(x, y); u.ScreenToClient(self.hwnd, ct.byref(pt))
+        cr = wt.RECT(); u.GetClientRect(self.hwnd, ct.byref(cr))
+        c = self.c
+        if c.full or "max" not in c.buttons or not 0 <= pt.y < c.h:
+            return False
+        i = list(reversed(c.buttons)).index("max")
+        return cr.right - (i + 1) * c.bw <= pt.x < cr.right - i * c.bw
 
     # -- Tk side: reflect what happened in the window procedure
     def _poll(self):
@@ -420,6 +496,8 @@ class NativeFrame:
             z = bool(self.u.IsZoomed(self.hwnd))
             hov = "max" if self.nc_hover else (c.hover if c.hover != "max" else None)
             if z != c.maxed or hov != c.hover:
+                if z != c.maxed:
+                    c._grips_visible(not z)                            # no resizing a maximised window
                 c.maxed, c.hover = z, hov
                 c.draw()
             c.win.after(60, self._poll)
@@ -441,6 +519,9 @@ class NativeFrame:
                 return 0
             if msg == 0x0084:                                          # WM_NCHITTEST
                 return self._hit(hwnd, lp)
+            if msg == 0x0112 and (wp & 0xFFF0) == 0xF100 and lp == 0:  # WM_SYSCOMMAND SC_KEYMENU from Alt alone:
+                return 0         # the (hidden) system menu would take the keyboard and the app would seem frozen
+                                 # (Alt+Space, lp == ' ', still opens it)
             if msg in (0x00A0, 0x02A2):                                # WM_NCMOUSEMOVE / WM_NCMOUSELEAVE
                 self.nc_hover = msg == 0x00A0 and wp == self.HTMAXBUTTON
             if wp == self.HTMAXBUTTON and msg in (0x00A1, 0x00A3):     # WM_NCLBUTTONDOWN / DBLCLK on our button

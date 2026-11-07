@@ -34,6 +34,16 @@ def main():
         assert hit(r.right - c.bw - c.bw // 2, mid_y) == 9, "our maximise button must be HTMAXBUTTON (Snap Layouts)"
         assert hit(r.right - c.bw // 2, mid_y) == 1, "close stays a Tk button"
         assert hit(r.left + 1, (r.top + r.bottom) // 2) == 10 and hit((r.left + r.right) // 2, (r.top + r.bottom) // 2) == 1
+        # what a REAL pointer finds: Windows asks the innermost window first, so the strip's child windows must let the
+        # question through over the max button (1.9.25 answered the frame directly but the canvas swallowed it)
+        u.WindowFromPoint.restype = wintypes.HWND
+        u.WindowFromPoint.argtypes = [wintypes.POINT]
+        root.attributes("-topmost", True); root.update()
+        assert u.WindowFromPoint(wintypes.POINT(r.right - c.bw - c.bw // 2, mid_y)) == c.native.hwnd, "max button must reach the frame"
+        assert u.WindowFromPoint(wintypes.POINT((r.left + r.right) // 2, mid_y)) == c.bar.winfo_id()
+        root.attributes("-topmost", False)
+        # a lone Alt must not park the app in the (hidden) system-menu mode
+        assert u.SendMessageW(c.native.hwnd, 0x0112, 0xF100, 0) == 0
         c.maximize(); root.update()
         assert c.maxed and u.IsZoomed(c.native.hwnd)
         c.restore(); root.update()
