@@ -37,7 +37,11 @@ def install(data_dir, version, root=None):
         faulthandler.enable(_file, all_threads=True)
     except Exception:
         pass
-    sys.excepthook = lambda et, ev, tb: write("uncaught", et, ev, tb)
+    def uncaught(et, ev, tb):
+        write("uncaught", et, ev, tb)
+        if os.environ.get("BTC_TRACEBACKS"):    # set by run_tests.py: a failing test must show why
+            traceback.print_exception(et, ev, tb, file=sys.__stderr__)
+    sys.excepthook = uncaught
     threading.excepthook = lambda a: write("thread %s" % getattr(a.thread, "name", "?"), a.exc_type, a.exc_value, a.exc_traceback)
     if root is not None:
         root.report_callback_exception = lambda et, ev, tb: write("window callback", et, ev, tb)

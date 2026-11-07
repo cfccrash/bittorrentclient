@@ -18,6 +18,7 @@ import crashlog
 import dnd
 import firewall
 import geo
+import netcheck
 import panels
 import rss
 import schedule
@@ -145,7 +146,7 @@ class App:
         self.P = ui.palette(self.cfg["theme"])
         self._themed = []         # (widget, {option: palette key}) repainted on theme change
         self.sort_col, self.sort_rev = None, False
-        self.bars, self.progress, self.bar_kind, self._bar_style = {}, {}, {}, {}
+        self.progress, self.bar_kind = {}, {}     # per torrent: percent done, bar colour kind (drawn by the list)
         self._snap_by_hash = {}
         self._empty_shown = None
         self._pf_full = ""
@@ -169,6 +170,7 @@ class App:
         self.rssq = queue.Queue()
         self._rss_busy = set()
         self.fw_state = None      # 'allowed' | 'blocked' | 'missing' | None (unknown)
+        self.net_state = None     # netcheck.check() result once the background check has run
         self._set_icon()
         ui.style_ttk(root, self.P, self.F, self.px)
         dialogs.install_messageboxes(self)
@@ -218,6 +220,7 @@ class App:
         self.refresh()
         self.poll()
         self.check_firewall()
+        self.root.after(5000, self.check_network)
         self.root.after(30000, self._resume_tick)
         self.root.after(8000, lambda: self.check_updates(manual=False))
 
@@ -516,7 +519,8 @@ class App:
         # drawn on a canvas so the aurora stays full size behind the rows (a ttk.Treeview paints them solid)
         self.tree = arttable.ArtTable(body, columns=self.cols, show="headings", selectmode="extended", height=10,
                                       rowheight=self.px(40), head_height=self.px(36), palette=lambda: self.P,
-                                      font=self.F.ui, head_font=self.F.small, draw_bg=self._draw_list_art)
+                                      font=self.F.ui, head_font=self.F.small, draw_bg=self._draw_list_art,
+                                      painters={"progress": self._paint_bar})
         for c, h, anchor in COLS:   # every column gets the same width (kept equal by _equalize_columns)
             self.tree.heading(c, text=h, anchor=anchor, command=lambda c=c: self.sort_by(c))
             self.tree.column(c, width=self.MIN_COL, minwidth=self.MIN_COL, stretch=False, anchor=anchor)
@@ -525,9 +529,7 @@ class App:
         self.tree.configure(yscrollcommand=self._yscroll)
         self.tree.pack(side="left", fill="both", expand=True)
         self.sb.pack(side="right", fill="y")
-        self.tree.bind("<Configure>", lambda e: self._on_resize(), add="+")  # re-equalise, then re-seat the bars
-        for ev in ("<ButtonRelease-1>", "<B1-Motion>", "<MouseWheel>"):
-            self.tree.bind(ev, lambda e: self.root.after_idle(self.place_bars), add="+")
+        self.tree.bind("<Configure>", lambda e: self._on_resize(), add="+")  # re-equalise the columns
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_select())
         self.tree.bind("<Button-3>", self._popup)
 
@@ -552,17 +554,21 @@ class App:
                           text="Click  Add torrent  to pick a .torrent file,\nor copy a magnet link and press Ctrl+V.")
 
     def _art(self):
-        """The aurora artwork (shared by the list backdrop and the details pane); None if it cannot be loaded."""
-        if not hasattr(self, "_backdrop"):
-            self._backdrop = None
+        """The aurora artwork for the current theme (list backdrop + details pane); None if it cannot be loaded.
+        The light one is generated from the dark one by tools/make_light_backdrop.py."""
+        dark = self.P["bg"][1:2] < "8"
+        key = "_backdrop" if dark else "_backdrop_light"
+        if not hasattr(self, key):
+            img = None
             try:
                 import assets_ui
-                self._backdrop = tk.PhotoImage(data=assets_ui.BACKDROP_WIDE)              # 2400 x 1100
+                img = tk.PhotoImage(data=assets_ui.BACKDROP_WIDE if dark else assets_ui.BACKDROP_WIDE_LIGHT)   # 2400 x 1100
                 if self.scale < 1.5:
-                    self._backdrop = self._backdrop.subsample(2, 2)
+                    img = img.subsample(2, 2)
             except Exception:
                 pass
-        return self._backdrop if self.P["bg"][1:2] < "8" else None     # dark themes only
+            setattr(self, key, img)
+        return getattr(self, key)
 
     def _build_details(self):
         det = self.det = self._frame(self.root, "bg")
@@ -1455,9 +1461,8 @@ class App:
             self.root.after_idle(self._layout_art)
         if getattr(self, "tabstrip", None) is not None:
             self._redraw_details()
-        self._bar_style.clear()
         self._paint_sidebar()
-        self.place_bars()
+        self.tree.redraw()
 
     # -- persistence ------------------------------------------------------
     def save(self):
@@ -1977,6 +1982,23 @@ class App:
             self.fw_state = firewall.check()
         threading.Thread(target=work, name="fwcheck", daemon=True).start()
 
+    def check_network(self):
+        """Look for software filtering local connections (AdGuard and the like), in the background."""
+        if getattr(self, "_net_busy", False):
+            return
+        self._net_busy, self.net_state, box = True, None, {}
+        threading.Thread(target=lambda: box.setdefault("r", netcheck.check()), name="netcheck", daemon=True).start()
+
+        def done():
+            if "r" not in box:
+                self.root.after(500, done)
+                return
+            self.net_state, self._net_busy = box["r"], False
+            if not self.net_state["ok"]:
+                self.log(netcheck.summary(self.net_state))
+                self.log(netcheck.hint(self.net_state))
+        self.root.after(500, done)
+
     def fw_text(self):
         st = self.fw_state if self.fw_state is not None else firewall.check()
         self.fw_state = st
@@ -2000,6 +2022,9 @@ class App:
         """Plain-language advice from what was found."""
         out = []
         pm = self.mgr.portmap
+        net = netcheck.hint(self.net_state)
+        if net:
+            out.append(net)
         if self.fw_state == "blocked":
             out.append("Windows Firewall is blocking this program: Settings > Connection > Allow in Windows Firewall.")
         elif self.fw_state == "missing":
@@ -2016,7 +2041,7 @@ class App:
 
     def diagnostics_text(self):
         pm = self.mgr.portmap
-        parts = ["Windows Firewall: %s" % (self.fw_state or "unknown")]
+        parts = ["Windows Firewall: %s" % (self.fw_state or "unknown"), netcheck.summary(self.net_state)]
         parts.append(pm.diagnostics() if pm else "Automatic port forwarding is turned off.")
         hints = self.hints()
         if hints:
@@ -2233,7 +2258,6 @@ class App:
     def _on_resize(self):
         self._equalize_columns()
         self._fit_details()
-        self.root.after_idle(self.place_bars)
 
     def _fit_details(self):
         """Taller window -> more rows in the Files / Peers / Trackers tables (4 on a small window, up to 12)."""
@@ -2245,35 +2269,32 @@ class App:
         except (tk.TclError, ValueError, AttributeError):
             pass
 
-    # -- progress bars ----------------------------------------------------
+    # -- progress bars (drawn by the list itself, so they sit on the artwork) -------------------------------
     def _yscroll(self, a, b):
         self._sb_set(a, b)
-        self.root.after_idle(self.place_bars)
 
-    def _make_bar(self, iid):
-        bar = ttk.Progressbar(self.tree, maximum=100, mode="determinate", style="Idle.Horizontal.TProgressbar")
-        bar.bind("<Button-1>", lambda e, i=iid: self._select_row(i))
-        bar.bind("<Button-3>", lambda e, i=iid: (self._select_row(i), self._show_menu(e.x_root, e.y_root)))
-        return bar
-
-    def _select_row(self, iid):
-        if iid and iid not in self.tree.selection():
-            self.tree.selection_set(iid)
+    def _paint_bar(self, c, iid, x, y, w, h, selected):
+        """Pill-shaped bar in the state colour; an active download gets a soft halo."""
+        P, px = self.P, self.px
+        bar_h = px(8)
+        x0, x1, cy = x + px(10), x + max(w - px(10), px(30)), y + h // 2
+        if x1 - x0 < bar_h * 2:
+            return
+        kind = self.bar_kind.get(iid, "Idle")
+        col = P[ui.BAR_KINDS.get(kind, "bar_idle")]
+        r = bar_h // 2
+        c.create_line(x0 + r, cy, x1 - r, cy, width=bar_h, capstyle="round", fill=P["trough"])
+        frac = max(0.0, min(1.0, self.progress.get(iid, 0) / 100.0))
+        if frac > 0:
+            end = x0 + r + (x1 - x0 - 2 * r) * frac
+            if kind == "Down":
+                c.create_line(x0 + r, cy, end, cy, width=bar_h + px(6), capstyle="round",
+                              fill=arttable.blend(col, P["bg"], 0.78))
+            c.create_line(x0 + r, cy, max(end, x0 + r + 0.5), cy, width=bar_h, capstyle="round", fill=col)
 
     def place_bars(self):
-        bar_h = self.px(8)
-        for iid, bar in list(self.bars.items()):
-            bb = self.tree.bbox(iid, "progress") if self.tree.exists(iid) else None
-            if not bb:  # row scrolled out of view
-                bar.place_forget()
-                continue
-            x, y, w, h = bb
-            bar.place(x=x + self.px(10), y=y + (h - bar_h) // 2, width=max(w - self.px(20), 10), height=bar_h)
-            bar["value"] = self.progress.get(iid, 0)
-            kind = self.bar_kind.get(iid, "Idle")
-            if self._bar_style.get(iid) != kind:
-                bar.configure(style=kind + ".Horizontal.TProgressbar")
-                self._bar_style[iid] = kind
+        """Kept for callers from before the bars were drawn by the list: just repaint it."""
+        self.tree.redraw()
 
     # -- live display -----------------------------------------------------
     def _status_text(self, s):
@@ -2305,20 +2326,17 @@ class App:
                 self.tree.item(h, values=vals, tags=tags)
             else:
                 self.tree.insert("", "end", iid=h, values=vals, tags=tags)
-            if h not in self.bars:
-                self.bars[h] = self._make_bar(h)
         self._apply_filter(snap)
         for iid in list(self.tree.get_children()) + list(self._hidden):
             if iid not in self._snap_by_hash:
                 self.tree.delete(iid)
                 self._hidden.discard(iid)
-        for iid in list(self.bars):
+        for iid in list(self.progress):
             if iid not in self._snap_by_hash:
-                self.bars.pop(iid).destroy()
-                for d in (self.progress, self.bar_kind, self._bar_style):
+                for d in (self.progress, self.bar_kind):
                     d.pop(iid, None)
         self._apply_sort(snap)
-        self.place_bars()
+        self.tree.redraw()          # progress values changed even where the row text did not
         self._toggle_empty(not snap)
         self._update_buttons()
         self._update_details()

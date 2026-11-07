@@ -7,7 +7,9 @@ Current version is in `version.py`; release notes are the sections at the bottom
 - Run: `python bittorrentclient.py` (Python 3.10+ with Tk). Player child process: `exe --player --session <json>`.
 - Tests: `python run_tests.py` (all) or `python run_tests.py real gui chrome`. Tk tests need a display (Linux: `Xvfb :99 &`, `DISPLAY=:99`).
   `test_gui` uses a fake Tk; `test_real`, `test_chrome`, `test_player`, `test_embed` use real Tk. `test_player` needs libmpv + ffmpeg and skips otherwise.
-  Tests hide tracebacks of failing assertions inside `main()` – re-run the single file to see them.
+  A failing test's last lines are printed and its full output saved to `test_logs/` (run_tests sets BTC_TRACEBACKS so crashlog echoes errors).
+  Windows: network filters (AdGuard) drop the first UDP packet per socket and reset ~5% of loopback TCP -> random failures in
+  test_local / test_real / test_cast / test_rss. Pause them before trusting a red run; `netcheck.check()` tells you.
 - Build: `build.bat` (PyInstaller onedir + Inno Setup; bundles/downloads libmpv via `libmpv_get.py`). CI: `.github/workflows/build.yml`.
 - Data folder: `%APPDATA%\BitTorrentClient` (state.json + .bak, search_plugins, mpv, media state). `crashlog.py` writes the error log.
 
@@ -17,6 +19,7 @@ Current version is in `version.py`; release notes are the sections at the bottom
   `embed.py` (re-parents an external player window into the Player tab), `cast.py` (DLNA + Chromecast), `thumbs.py library.py subtitles.py media_state.py libmpv_get.py`.
 - UI: `bittorrentclient.py` (App), `dialogs.py` (dialogs, SearchWindow, themed MessageDialog), `ui.py` (palettes LIGHT/DARK="Aurora", ttk styles, Tooltip),
   `chrome.py` (frameless windows with own title strip/resize grips), `assets_ui.py` (embedded banner/backdrop PNGs), `panels.py`, `tray.py`, `dnd.py`.
+- Artwork: `assets_ui.BACKDROP_WIDE` (dark, paletted PNG) and `BACKDROP_WIDE_LIGHT` (made from it by `tools/make_light_backdrop.py`), picked by `App._art()`.
 - Main list + details tables are `arttable.ArtTable` (Canvas drawn over the aurora, Treeview-like API). Its `delete/move/index/bbox/insert` are the
   Treeview row methods, shadowing Canvas ones: inside it use `tk.Canvas.delete(self, ...)` for canvas items. Details pane art = `App._draw_art(c)`.
 

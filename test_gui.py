@@ -483,7 +483,7 @@ def main():
     # ---- removing torrents clears rows and bars
     app.refresh()   # pick up the magnet added through the dialog
     app.tree.selection_set(tuple(app.tree.order)); app.remove(); time.sleep(0.4); app.refresh()
-    assert not app.tree.rows and not app.bars and app._empty_shown is True
+    assert not app.tree.rows and not app.progress and app._empty_shown is True
 
     # ---- every column (headings and cell text) is left-aligned
     assert {c["anchor"] for c in app.tree.columns.values()} == {"w"} and len(app.tree.columns) == 8

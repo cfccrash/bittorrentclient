@@ -8,3 +8,4 @@ installer/
 libmpv-2.dll
 mpv-2.dll
 .venv/
+test_logs/

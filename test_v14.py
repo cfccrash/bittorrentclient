@@ -223,6 +223,19 @@ def main():
         for s in held:
             s.close()
     print("listen port: falls back to a free port when the whole range is taken: OK")
+
+    # ---- local network filter check (AdGuard & co.): wording from results, and the real check's shape
+    import netcheck
+    good = {"ok": True, "udp_first_lost": False, "tcp_failed": 0, "tcp_tried": 40, "filters": []}
+    bad = {"ok": False, "udp_first_lost": True, "tcp_failed": 3, "tcp_tried": 40, "filters": ["AdGuard"]}
+    assert "OK" in netcheck.summary(good) and netcheck.hint(good) is None and netcheck.hint(None) is None
+    s, h = netcheck.summary(bad), netcheck.hint(bad)
+    assert "PROBLEM" in s and "first UDP packet" in s and "3 of 40" in s and "AdGuard" in s, s
+    assert "AdGuard" in h and netcheck.program_name() in h, h
+    assert "firewall, VPN or ad blocker" in netcheck.hint(dict(bad, filters=[]))
+    r = netcheck.check()
+    assert set(r) == set(good) and r["tcp_tried"] > 0 and r["ok"] == (not r["udp_first_lost"] and not r["tcp_failed"]), r
+    print("local network filter check (%s): OK" % ("clean" if r["ok"] else "filter found: " + netcheck.summary(r)))
     print("V1.4 ENGINE TESTS: ALL PASSED")
 
 

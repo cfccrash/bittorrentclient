@@ -16,7 +16,7 @@ _ids = itertools.count(1)
 
 class ArtTable(tk.Canvas):
     def __init__(self, master, columns=(), show="headings", selectmode="extended", height=0, rowheight=40,
-                 head_height=32, inset=0, palette=None, font=None, head_font=None, draw_bg=None, **kw):
+                 head_height=32, inset=0, palette=None, font=None, head_font=None, draw_bg=None, painters=None, **kw):
         super().__init__(master, bd=0, highlightthickness=0, takefocus=1, **kw)
         self.rows, self.order, self.sel = {}, [], ()
         self.headings, self.columns, self.tags = {}, {}, {}
@@ -31,6 +31,8 @@ class ArtTable(tk.Canvas):
         self._anchor = None            # shift-click / arrow-key anchor
         self._job = None
         self._hover_head = None
+        self._hover_row = None
+        self.painters = dict(painters or {})   # column id -> fn(canvas, iid, x, y, w, h, selected) draws that cell
         self._layout = []              # [(column id, x, width)] of the last draw
         self._elide_cache = {}
         if self._height:
@@ -283,11 +285,17 @@ class ArtTable(tk.Canvas):
                 self.create_text(x + pad, hh // 2, anchor="w", font=hf, fill=P["fg"] if hot else P["muted"],
                                  text=self._elide(text, hf, cw - 2 * pad))
         self.create_line(self.inset, hh - 1, w - self.inset, hh - 1, fill=P["border"])
+        x0, x1 = self.inset + 1, w - self.inset - 2
         for n, iid in enumerate(self.order[self._top:self._top + self._visible()]):
             row, y = self.rows[iid], hh + n * rh
             on = iid in self.sel
+            # selection / hover are outlines, so the artwork stays visible through the row
             if on:
-                self.create_rectangle(self.inset, y, w - self.inset, y + rh, fill=P["sel"], width=0)
+                round_rect(self, x0, y + 2, x1, y + rh - 2, max(3, rh // 6), outline=blend(P["accent"], P["bg"], 0.45),
+                           fill="", width=1)
+                self.create_rectangle(x0, y + rh // 4, x0 + 3, y + rh - rh // 4, fill=P["accent"], width=0)
+            elif iid == self._hover_row:
+                round_rect(self, x0, y + 2, x1, y + rh - 2, max(3, rh // 6), outline=P["border"], fill="", width=1)
             fg = P["sel_fg"] if on else next((self.tags[t]["foreground"] for t in row["tags"]
                                               if self.tags.get(t, {}).get("foreground")), P["fg"])
             vals = row["values"]
@@ -299,6 +307,9 @@ class ArtTable(tk.Canvas):
                     continue
                 v = vals[vi] if vi < len(vals) else ""
                 vi += 1
+                if col in self.painters:
+                    self.painters[col](self, iid, x, y, cw, rh, on)
+                    continue
                 text = self._elide(str(v), f, cw - 2 * pad)
                 if not text:
                     continue
@@ -354,11 +365,11 @@ class ArtTable(tk.Canvas):
         return None
 
     def _motion(self, e):
-        self._set_hover(self._column_at(e.x) if e.y < self.head_height else None)
+        self._set_hover(self._column_at(e.x) if e.y < self.head_height else None, self.identify_row(e.y) or None)
 
-    def _set_hover(self, col):
-        if col != self._hover_head:
-            self._hover_head = col
+    def _set_hover(self, col, row=None):
+        if (col, row) != (self._hover_head, self._hover_row):
+            self._hover_head, self._hover_row = col, row
             self.redraw()
 
     # ---- helpers -----------------------------------------------------------------------------------------
@@ -388,3 +399,18 @@ class ArtTable(tk.Canvas):
                 self.event_generate("<<TreeviewSelect>>", when="tail")
             except tk.TclError:
                 pass
+
+
+def blend(c1, c2, t):
+    """Colour `t` of the way from c1 to c2 ("#rrggbb")."""
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#%02x%02x%02x" % tuple(int(round(x + (y - x) * t)) for x, y in zip(a, b))
+
+
+def round_rect(c, x0, y0, x1, y1, r, **kw):
+    """A rounded rectangle on canvas `c` (a smoothed polygon; Tk has no native one)."""
+    r = max(1, min(r, (x1 - x0) // 2, (y1 - y0) // 2))
+    pts = (x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1, x1 - r, y1, x0 + r, y1,
+           x0, y1, x0, y1 - r, x0, y0 + r, x0, y0)
+    return c.create_polygon(pts, smooth=True, **kw)

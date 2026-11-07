@@ -1322,6 +1322,7 @@ class DiagnosticsDialog(_Dialog):
         pm = self.app.mgr.portmap
         if pm:
             pm.rescan()
+        self.app.check_network()       # the periodic _reload shows the result when it is in
         self._reload()
 
     def _copy(self):

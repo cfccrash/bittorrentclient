@@ -104,6 +104,7 @@ class Chrome:
 
     def restyle(self, P):
         self.P = P
+        self.img = _banner(self.win, self.h) if P.get("bg", "#fff")[1:2] < "8" else None   # theme may have changed
         try:
             self.win.configure(highlightbackground=P["border"], highlightcolor=P["border"])
         except tk.TclError:

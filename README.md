@@ -333,3 +333,11 @@ downloaded yet waits for it instead of failing.
 - The tab row is now drawn by the app (the selected tab gets an accent underline); clicking a tab name works as before.
 - **The artwork now shows behind every table too**: the torrent list and the Files, Peers, Trackers and Log tables are drawn over it (new `arttable.py`, a canvas table that behaves like the old ones: click, Shift/Ctrl-click, arrow keys, mouse wheel, right-click menus, sortable headings), and the Speed graph draws its lines over it.
 - The torrent list keeps the artwork **full size** however many torrents are added (it used to shrink to the space below the last row).
+
+### 1.9.14
+- **Network filter check:** a few seconds after start the app tests whether something on the PC is filtering local connections (AdGuard was found doing this: it drops the first UDP packet a new socket receives and resets or stalls some local connections, which breaks DHT start-up and playback inside the app at random). If so, the Log says so and **Diagnostics** names the program and what to exclude; **Rescan** repeats the check.
+- **Progress bars are drawn into the list:** rounded bars in the state colour with a soft halo while downloading, on top of the artwork. They no longer lag behind (a finished torrent could show an empty bar until the next repaint).
+- **Selection and hover:** the selected row gets an accent stripe and outline instead of a solid band, so the artwork stays visible; the row under the pointer gets a faint outline.
+- **Light theme artwork:** a light version of the aurora behind the list and details pane (generated from the dark one by `tools/make_light_backdrop.py`).
+- Switching between light and dark while running now also updates the title bar artwork (it kept the dark banner until a restart).
+- `run_tests.py` prints the end of a failing test's output (including errors the app's crash log used to swallow) and keeps the whole output in `test_logs/`.
