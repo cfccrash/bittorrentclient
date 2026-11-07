@@ -321,3 +321,15 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.11
 - **libmpv is built into the installer.** `build.bat` and the GitHub Actions workflow now download libmpv (`python libmpv_get.py dist\BitTorrentClient`) and put it in the program folder, so an installed copy has the built-in player straight away and never shows the "needs libmpv" question. A `libmpv-2.dll` placed next to `build.bat` / in the repository is still used instead of downloading. If the download fails at build time the app falls back to offering it on first use, as before.
+
+### 1.9.12
+- DHT: a node whose routing table is still empty (for example because its first bootstrap packet was lost) now retries after 5 s, backing off to 60 s, instead of waiting a full minute before trying again.
+- **Incoming connections on Windows with Hyper-V / WSL / Docker:** those reserve blocks of ports in the 49152+ range, and a random port that fell into one (plus the 19 after it) left the client running with *no incoming connections* on every start. The client now falls back to a free port chosen by Windows, and new random ports (first run and the **Random** button in Settings) come from 20000–40000, outside that range.
+- A torrent sent back to the download queue shows **Queued** straight away instead of **Paused** for a few seconds while the trackers are told it stopped.
+- Tests run on Windows: `test_gui` no longer depends on the real desktop size or the real autostart registry entry, `test_chrome` waits for the window's start-up re-show before resizing and uses a temporary data folder instead of `%APPDATA%\BitTorrentClient`.
+
+### 1.9.13
+- **The aurora artwork now runs through the details pane** (dark themes): the tab row (Overview … Player), the Overview page and the idle Player tab draw it as one continuous picture. The Files, Peers, Trackers, Log and Speed pages keep their solid backgrounds so the tables stay easy to read; the light theme stays plain.
+- The tab row is now drawn by the app (the selected tab gets an accent underline); clicking a tab name works as before.
+- **The artwork now shows behind every table too**: the torrent list and the Files, Peers, Trackers and Log tables are drawn over it (new `arttable.py`, a canvas table that behaves like the old ones: click, Shift/Ctrl-click, arrow keys, mouse wheel, right-click menus, sortable headings), and the Speed graph draws its lines over it.
+- The torrent list keeps the artwork **full size** however many torrents are added (it used to shrink to the space below the last row).

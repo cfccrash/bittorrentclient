@@ -17,6 +17,8 @@ Current version is in `version.py`; release notes are the sections at the bottom
   `embed.py` (re-parents an external player window into the Player tab), `cast.py` (DLNA + Chromecast), `thumbs.py library.py subtitles.py media_state.py libmpv_get.py`.
 - UI: `bittorrentclient.py` (App), `dialogs.py` (dialogs, SearchWindow, themed MessageDialog), `ui.py` (palettes LIGHT/DARK="Aurora", ttk styles, Tooltip),
   `chrome.py` (frameless windows with own title strip/resize grips), `assets_ui.py` (embedded banner/backdrop PNGs), `panels.py`, `tray.py`, `dnd.py`.
+- Main list + details tables are `arttable.ArtTable` (Canvas drawn over the aurora, Treeview-like API). Its `delete/move/index/bbox/insert` are the
+  Treeview row methods, shadowing Canvas ones: inside it use `tk.Canvas.delete(self, ...)` for canvas items. Details pane art = `App._draw_art(c)`.
 
 ## Things learned the hard way (Windows behaviour I could not test from Linux)
 - Frameless windows (`overrideredirect`) are not stacked by Windows like owned dialogs: modal dialogs must stay `-topmost`, and must never `wait_visibility()`;

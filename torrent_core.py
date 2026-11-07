@@ -983,7 +983,9 @@ class Session:
             coros.append(self.dht_loop())
         self.tasks = [loop.create_task(c) for c in coros]
 
-    async def stop(self, announce=False):
+    async def stop(self, announce=False, state="Paused"):
+        """`state` is shown at once: a torrent moved back to the queue must not read "Paused" during the announce."""
+        self.state = state
         self.stopped = True
         self.stop_flag = True
         for tk in self.tasks + list(self.conn_tasks):
@@ -991,7 +993,6 @@ class Session:
         self.tasks = []
         for p in list(self.peers):
             p.close()
-        self.state = "Paused"
         self.down_rate = self.up_rate = 0.0
         self.read_cache.clear()
         if self.write_tasks:       # let pieces already received reach the disk before the files are closed
@@ -1742,6 +1743,7 @@ class DHT:
             t.cancel()
 
     async def _maintain(self):
+        empty_wait = 5   # an empty table retries soon (a lost bootstrap packet must not cost a minute), backing off to 60 s
         while True:
             if len(self.nodes) < 30:
                 try:
@@ -1749,6 +1751,11 @@ class DHT:
                 except Exception:
                     pass
             self.ready.set()
+            if not self.nodes:
+                await asyncio.sleep(empty_wait)
+                empty_wait = min(empty_wait * 2, 60)
+                continue
+            empty_wait = 5
             await asyncio.sleep(60 if len(self.nodes) < 30 else 300)
             now = time.time()
             if now - self.rotated > 300:  # tokens stay valid for ~10 minutes
@@ -2154,7 +2161,7 @@ class Manager:
             self._run(s.relocate(new_dir), timeout=3600)
 
     async def _park(self, s):
-        await s.stop(announce=True)
+        await s.stop(announce=True, state="Paused" if s.user_paused else "Queued")
         if not s.user_paused:
             s.state = "Queued"
 
@@ -2358,6 +2365,13 @@ class Manager:
             self.servers.append(await asyncio.start_server(self._incoming, sock=s4))
             self.port = s4.getsockname()[1]
             break
+        else:   # all 20 taken or reserved (Windows excludes whole blocks): let the OS pick, never run without a listener
+            try:
+                s4 = _bind(socket.AF_INET, socket.SOCK_STREAM, 0)
+                self.servers.append(await asyncio.start_server(self._incoming, sock=s4))
+                self.port = s4.getsockname()[1]
+            except OSError:
+                pass
         fams = [socket.AF_INET]
         # UDP: the DHT and uTP share one socket
         node_id = os.urandom(20)

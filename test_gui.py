@@ -148,6 +148,8 @@ def main():
     assert set(ui.LIGHT) == set(ui.DARK), set(ui.LIGHT) ^ set(ui.DARK)
     assert ui.palette("dark") is ui.DARK and ui.palette("light") is ui.LIGHT
     assert ui.fmt_size(1536) == "1.5 KB" and ui.fmt_rate(0) == "-" and ui.fmt_eta(125) == "2m 05s"
+    # the fake screen is 1366x768; on Windows work_area() would ask the real desktop instead
+    ui.work_area = lambda root: (0, 0, int(root.winfo_screenwidth()), int(root.winfo_screenheight()))
 
     root = tk.Tk()
     inbox = queue.Queue()
@@ -210,6 +212,10 @@ def main():
     assert not app.btn["remove"].enabled
 
     # ---- status bar
+    t_end = time.time() + 10
+    while not app.mgr.port and time.time() < t_end:   # the listener comes up asynchronously
+        time.sleep(0.1)
+    app.refresh()
     assert "\u2193" in app.s_speed.opts["text"] and "3 torrents" in app.s_count.opts["text"]
     assert "port" in app.s_net.opts["text"] and "DHT" in app.s_net.opts["text"]
     assert app.s_pf.opts["text"] and app.s_dot.opts["fg"] in list(ui.LIGHT.values()) + list(ui.DARK.values())
@@ -283,7 +289,7 @@ def main():
         and sd.result["utp"] == "prefer" and sd.result["portmap"] is False
     sd2 = dialogs.SettingsDialog(app); sd2.down.set("fast"); tk.messagebox.showerror.reset_mock(); sd2._ok()
     assert sd2.result is None and tk.messagebox.showerror.called
-    assert sd.result["port"] == app.cfg["port"] and 49152 <= app.cfg["port"] <= 65000
+    assert sd.result["port"] == app.cfg["port"] and 20000 <= app.cfg["port"] <= 40000
     sd5 = dialogs.SettingsDialog(app); sd5.port.set("80"); tk.messagebox.showerror.reset_mock(); sd5._ok()
     assert sd5.result is None and tk.messagebox.showerror.called
     sd6 = dialogs.SettingsDialog(app); sd6.port.set("51234"); sd6._ok(); assert sd6.result["port"] == 51234
@@ -377,7 +383,8 @@ def main():
     # ---- start with Windows / start hidden in the tray
     import autostart as autostart_t
     assert "--minimized" in autostart_t.command()
-    assert autostart_t.available() is False and autostart_t.is_enabled() is False and autostart_t.set_enabled(True) is False
+    with mock.patch.object(autostart_t.sys, "platform", "linux"):   # never touch the real Run key from a test
+        assert autostart_t.available() is False and autostart_t.is_enabled() is False and autostart_t.set_enabled(True) is False
     with mock.patch.object(autostart_t, "available", return_value=True), \
             mock.patch.object(autostart_t, "is_enabled", return_value=False), \
             mock.patch.object(autostart_t, "set_enabled") as set_en:

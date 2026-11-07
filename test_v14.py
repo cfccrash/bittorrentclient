@@ -198,6 +198,31 @@ def main():
         print("low disk space stops the download with a clear error: OK")
     finally:
         mgr.shutdown()
+
+    # ---- listen port: when the configured port and the 19 after it are all unusable (on Windows Hyper-V / WSL
+    # reserve whole blocks), the Manager must still listen on some port instead of running without incoming connections
+    for _ in range(20):
+        base, held = 20000 + int.from_bytes(os.urandom(2), "big") % 18000, []
+        try:
+            for p in range(base, base + 20):
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); held.append(s)
+                s.bind(("0.0.0.0", p)); s.listen(1)
+            break
+        except OSError:
+            for s in held:
+                s.close()
+    else:
+        raise SystemExit("could not find 20 free ports in a row")
+    try:
+        m2 = Manager(base)
+        try:
+            assert m2.port and not base <= m2.port < base + 20, (base, m2.port)
+        finally:
+            m2.shutdown()
+    finally:
+        for s in held:
+            s.close()
+    print("listen port: falls back to a free port when the whole range is taken: OK")
     print("V1.4 ENGINE TESTS: ALL PASSED")
 
 

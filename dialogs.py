@@ -696,7 +696,7 @@ class SettingsDialog(_Dialog):
         ttk.Label(pf, text="Listening port").pack(side="left")
         self.port = tk.StringVar(value=str(cfg.get("port") or mgr.port or ""))
         ttk.Entry(pf, textvariable=self.port, width=8).pack(side="left", padx=8)
-        ttk.Button(pf, text="Random", command=lambda: self.port.set(str(random.randint(49152, 65000)))).pack(side="left")
+        ttk.Button(pf, text="Random", command=lambda: self.port.set(str(random.randint(20000, 40000)))).pack(side="left")
         ttk.Label(pf, text="takes effect after restart", style="Muted.TLabel").pack(side="left", padx=8)
         status = mgr.portmap.status if mgr.portmap else "off"
         ttk.Label(box, text="Listening on port %s.   Status: %s" % (mgr.port or "-", status), style="Muted.TLabel",

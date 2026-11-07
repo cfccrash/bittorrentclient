@@ -12,6 +12,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import arttable
 import autostart as autostart_mod
 import crashlog
 import dnd
@@ -75,7 +76,8 @@ def data_dir():
 
 
 def random_port():
-    return random.randint(49152, 65000)
+    # below Windows' dynamic range (49152+), where Hyper-V / WSL / Docker reserve port blocks that cannot be bound
+    return random.randint(20000, 40000)
 
 
 def rate0(r):
@@ -508,10 +510,13 @@ class App:
         self.refresh_now()
 
     def _build_table(self, parent):
-        body = self._frame(parent, "surface")
+        body = self._frame(parent, "bg")
         body.pack(side="left", fill="both", expand=True)
         self.cols = tuple(c for c, _h, _a in COLS)
-        self.tree = ttk.Treeview(body, columns=self.cols, show="headings", selectmode="extended")
+        # drawn on a canvas so the aurora stays full size behind the rows (a ttk.Treeview paints them solid)
+        self.tree = arttable.ArtTable(body, columns=self.cols, show="headings", selectmode="extended", height=10,
+                                      rowheight=self.px(40), head_height=self.px(36), palette=lambda: self.P,
+                                      font=self.F.ui, head_font=self.F.small, draw_bg=self._draw_list_art)
         for c, h, anchor in COLS:   # every column gets the same width (kept equal by _equalize_columns)
             self.tree.heading(c, text=h, anchor=anchor, command=lambda c=c: self.sort_by(c))
             self.tree.column(c, width=self.MIN_COL, minwidth=self.MIN_COL, stretch=False, anchor=anchor)
@@ -529,14 +534,7 @@ class App:
         # shown while the list is empty: the aurora artwork spreads from the centre of the list and melts into the panel
         self.empty = tk.Canvas(body, bd=0, highlightthickness=0, bg=self.P["bg"])
         self._themed.append((self.empty, {"bg": "bg"}))
-        self._backdrop = None
-        try:
-            import assets_ui
-            self._backdrop = tk.PhotoImage(data=assets_ui.BACKDROP_WIDE)              # 2400 x 1100
-            if self.scale < 1.5:
-                self._backdrop = self._backdrop.subsample(2, 2)
-        except Exception:
-            pass
+        self._art()
         self.empty.bind("<Configure>", lambda e: self._draw_empty())
         self.empty.bind("<Button-1>", lambda e: self.tree.selection_set(()))
         self.empty.bind("<Button-3>", lambda e: self._show_menu(e.x_root, e.y_root))
@@ -546,36 +544,59 @@ class App:
         c, P = self.empty, self.P
         c.delete("all")
         w, h = c.winfo_width(), c.winfo_height()
-        if self._backdrop is not None and P["bg"][1:2] < "8":
-            c.create_image(w // 2, h // 2, image=self._backdrop)
+        if self._art() is not None:
+            c.create_image(w // 2, h // 2, image=self._art())
         if self._empty_shown:
             c.create_text(w // 2, h // 2 + self.px(60), text="No torrents yet", font=self.F.title, fill=P["fg"])
             c.create_text(w // 2, h // 2 + self.px(112), justify="center", font=self.F.big, fill=P["muted"],
                           text="Click  Add torrent  to pick a .torrent file,\nor copy a magnet link and press Ctrl+V.")
 
+    def _art(self):
+        """The aurora artwork (shared by the list backdrop and the details pane); None if it cannot be loaded."""
+        if not hasattr(self, "_backdrop"):
+            self._backdrop = None
+            try:
+                import assets_ui
+                self._backdrop = tk.PhotoImage(data=assets_ui.BACKDROP_WIDE)              # 2400 x 1100
+                if self.scale < 1.5:
+                    self._backdrop = self._backdrop.subsample(2, 2)
+            except Exception:
+                pass
+        return self._backdrop if self.P["bg"][1:2] < "8" else None     # dark themes only
+
     def _build_details(self):
-        det = self._frame(self.root, "bg")
+        det = self.det = self._frame(self.root, "bg")
         det.pack(fill="x", side="bottom")
-        self.tabs = ttk.Notebook(det)
-        self.tabs.pack(fill="x", padx=self.px(12), pady=(self.px(8), self.px(8)))
+        # The aurora runs through the whole pane: the tab row and the Overview page are canvases that each draw the
+        # same artwork centred on the pane, so the pieces line up as one picture. The ttk Notebook keeps doing the
+        # page switching; its own tab row is hidden (style Bare.TNotebook) and replaced by the drawn one.
+        self.tabstrip = tk.Canvas(det, bd=0, highlightthickness=0, height=self.px(48), bg=self.P["bg"], cursor="hand2")
+        self._themed.append((self.tabstrip, {"bg": "bg"}))
+        self.tabstrip.pack(fill="x")
+        self._tab_hits, self._tab_hover = [], None
+        self.tabstrip.bind("<Configure>", lambda e: self._redraw_details())
+        self.tabstrip.bind("<Button-1>", self._tabstrip_click)
+        self.tabstrip.bind("<Motion>", self._tabstrip_hover)
+        self.tabstrip.bind("<Leave>", lambda e: self._tabstrip_hover(None))
+        self.tabs = ttk.Notebook(det, style="Bare.TNotebook")
+        self.tabs.pack(fill="x")    # edge to edge: the artwork must not be cut by an inset
         # -- overview
-        ov = ttk.Frame(self.tabs, padding=(self.px(12), self.px(10)))
+        ov = ttk.Frame(self.tabs)
         self.tabs.add(ov, text="Overview")
+        self.ov_canvas = tk.Canvas(ov, bd=0, highlightthickness=0, bg=self.P["bg"])
+        self._themed.append((self.ov_canvas, {"bg": "bg"}))
+        self.ov_canvas.pack(fill="both", expand=True)
+        self.ov_canvas.bind("<Configure>", lambda e: self._redraw_details())
+        det.bind("<Configure>", lambda e: self._redraw_details())
         self.d_name = tk.StringVar(value="")
-        self._label(ov, "bg", "fg", self.F.bold, textvariable=self.d_name, anchor="w").pack(fill="x")
-        grid = self._frame(ov, "bg")
-        grid.pack(fill="x", pady=(8, 0))
-        grid.columnconfigure(0, weight=1)
+        self.d_name.trace_add("write", lambda *a: self._redraw_details())
         self.d_vars = {}
-        fields = (("save", "Save to"), ("size", "Size"), ("down", "Downloaded (session)"),
-                  ("up", "Uploaded (session)"), ("ratio", "Ratio"), ("peers", "Peers"), ("hash", "Info hash"))
-        for i, (key, title) in enumerate(fields):
-            cell = self._frame(grid, "bg")
-            cell.grid(row=0, column=i, sticky="w", padx=(0, 0 if i == len(fields) - 1 else 28))
-            self._label(cell, "bg", "muted", self.F.small, text=title).pack(anchor="w")
+        self._ov_fields = (("save", "Save to"), ("size", "Size"), ("down", "Downloaded (session)"),
+                           ("up", "Uploaded (session)"), ("ratio", "Ratio"), ("peers", "Peers"), ("hash", "Info hash"))
+        for key, title in self._ov_fields:
             var = tk.StringVar(value="-")
+            var.trace_add("write", lambda *a: self._redraw_details())
             self.d_vars[key] = var
-            self._label(cell, "bg", "fg", self.F.ui, textvariable=var, anchor="w").pack(anchor="w")
         # -- files / peers / trackers
         self.tab_trees = {}
         for title, cols in (
@@ -589,9 +610,10 @@ class App:
                 ("Log", (("when", "Time", 90, False), ("msg", "Event", 700, True)))):
             f = ttk.Frame(self.tabs)
             self.tabs.add(f, text=title)
-            tv = ttk.Treeview(f, columns=[c[0] for c in cols], show="tree headings" if title == "Peers" else "headings",
-                              style="Compact.Treeview", height=4,
-                              selectmode="extended" if title == "Files" else "browse")
+            tv = arttable.ArtTable(f, columns=[c[0] for c in cols], show="tree headings" if title == "Peers" else "headings",
+                                   height=4, rowheight=self.px(24), head_height=self.px(28), inset=self.px(12),
+                                   selectmode="extended" if title == "Files" else "browse", palette=lambda: self.P,
+                                   font=self.F.ui, head_font=self.F.small, draw_bg=self._draw_art)
             if title == "Peers":    # the first (tree) column carries the national flag
                 tv.heading("#0", text="", anchor="w")
                 tv.column("#0", width=self.px(44), minwidth=self.px(44), stretch=False, anchor="w")
@@ -626,14 +648,12 @@ class App:
         gf = ttk.Frame(self.tabs)
         self.tabs.add(gf, text="Speed")
         self.speed_canvas = tk.Canvas(gf, height=self.px(100), highlightthickness=0, bd=0)
-        self._themed.append((self.speed_canvas, {"bg": "surface"}))
-        self.speed_canvas.pack(fill="x")
+        self._themed.append((self.speed_canvas, {"bg": "bg"}))
+        self.speed_canvas.pack(fill="both", expand=True)
+        self.speed_canvas.bind("<Configure>", lambda e: self._update_tabs() if self._tab == "Speed" else None)
         self.player_tab = tk.Frame(self.tabs, bg="black")
         self.tabs.add(self.player_tab, text="Player")
-        self._player_hint = tk.Label(self.player_tab, text="Press Play on a torrent to watch it here.\nUse Detach to move the video into its own window.",
-                                     bg=self.P["bg"], fg=self.P["muted"], justify="center")
-        self._themed.append((self._player_hint, {"bg": "bg", "fg": "muted"}))
-        self._player_hint.place(relx=0.5, rely=0.5, anchor="center")
+        self._player_idle("Press Play on a torrent to watch it here.\nUse Detach to move the video into its own window.")
         self.tabs.bind("<<NotebookTabChanged>>", lambda e: self._on_tab())
         self.root.bind("<Configure>", self._size_later, add="+")
 
@@ -642,7 +662,122 @@ class App:
             self._tab = self.tabs.tab(self.tabs.select(), "text")
         except tk.TclError:
             return
+        self._redraw_details()
         self._update_tabs()
+
+    # -- details pane artwork: drawn tab row + Overview page ------------------------------------------------
+    def _redraw_details(self):
+        """Coalesce redraws (every detail field change and resize asks for one)."""
+        if not getattr(self, "_det_job", None):
+            self._det_job = self.root.after_idle(self._draw_details)
+
+    def _draw_details(self):
+        self._det_job = None
+        try:
+            self._draw_tabstrip()
+            self._draw_overview()
+            self._draw_player_idle()
+        except tk.TclError:
+            pass
+
+    def _player_idle(self, text):
+        """Player tab with nothing playing: the aurora with a short hint instead of a black box."""
+        for w in self.player_tab.winfo_children():
+            w.destroy()
+        c = self._player_hint = tk.Canvas(self.player_tab, bd=0, highlightthickness=0, bg=self.P["bg"])
+        c.hint = text
+        c.place(x=0, y=0, relwidth=1, relheight=1)
+        c.bind("<Configure>", lambda e: self._redraw_details())
+        self._redraw_details()
+
+    def _draw_player_idle(self):
+        c = getattr(self, "_player_hint", None)
+        if c is None or not c.winfo_exists():
+            return
+        c.delete("all")
+        c.configure(bg=self.P["bg"])
+        self._draw_art(c)
+        c.create_text(c.winfo_width() // 2, c.winfo_height() // 2, text=c.hint, justify="center",
+                      font=self.F.ui, fill=self.P["muted"])
+
+    def _draw_art(self, c):
+        """Draw the artwork on canvas `c` centred on the details pane, so every canvas shows its own slice."""
+        art = self._art()
+        if art is None:
+            return
+        det = self.det
+        x = det.winfo_rootx() + det.winfo_width() // 2 - c.winfo_rootx()
+        y = det.winfo_rooty() + det.winfo_height() // 2 - c.winfo_rooty()
+        c.create_image(x, y, image=art)
+
+    def _draw_tabstrip(self):
+        c, P, px = self.tabstrip, self.P, self.px
+        c.delete("all")
+        self._draw_art(c)
+        try:
+            cur = self.tabs.index(self.tabs.select())
+        except tk.TclError:
+            cur = -1
+        top, h, pad = px(8), c.winfo_height(), px(18)
+        x, mid = px(12), (top + h) // 2      # first label lines up with the page text
+        self._tab_hits = []
+        for i, tid in enumerate(self.tabs.tabs()):
+            text = self.tabs.tab(tid, "text")
+            w = self.F.ui.measure(text) + 2 * pad
+            on = i == cur
+            c.create_text(x + w // 2, mid, text=text, font=self.F.ui,
+                          fill=P["fg"] if on or i == self._tab_hover else P["muted"])
+            if on:
+                c.create_rectangle(x + pad, h - px(3), x + w - pad, h - 1, fill=P["accent"], width=0)
+            self._tab_hits.append((x, x + w, i))
+            x += w
+
+    def _tab_at(self, e):
+        if e is not None:
+            for x0, x1, i in self._tab_hits:
+                if x0 <= e.x < x1:
+                    return i
+        return None
+
+    def _tabstrip_click(self, e):
+        i = self._tab_at(e)
+        if i is not None:
+            self.tabs.select(i)        # fires <<NotebookTabChanged>> -> _on_tab -> redraw
+
+    def _tabstrip_hover(self, e):
+        i = self._tab_at(e)
+        if i != self._tab_hover:
+            self._tab_hover = i
+            self._redraw_details()
+
+    def _draw_overview(self):
+        c, P, F, px = self.ov_canvas, self.P, self.F, self.px
+        c.delete("all")
+        self._draw_art(c)
+        m, w = px(24), c.winfo_width()
+        y = px(10)
+        c.create_text(m, y, anchor="nw", text=self._elide(self.d_name.get(), F.bold, w - 2 * m), font=F.bold, fill=P["fg"])
+        y += F.bold.metrics("linespace") + px(8)
+        y2 = y + F.small.metrics("linespace") + px(2)
+        # "Save to" on the left, the other fields as a group on the right (each as wide as its title or value)
+        x = w - m
+        for key, title in reversed(self._ov_fields[1:]):
+            val = self.d_vars[key].get()
+            x -= max(F.small.measure(title), F.ui.measure(val))
+            c.create_text(x, y, anchor="nw", text=title, font=F.small, fill=P["muted"])
+            c.create_text(x, y2, anchor="nw", text=val, font=F.ui, fill=P["fg"])
+            x -= px(28)
+        key, title = self._ov_fields[0]
+        c.create_text(m, y, anchor="nw", text=title, font=F.small, fill=P["muted"])
+        c.create_text(m, y2, anchor="nw", text=self._elide(self.d_vars[key].get(), F.ui, x - m), font=F.ui, fill=P["fg"])
+
+    @staticmethod
+    def _elide(text, font, room):
+        if room <= 0 or font.measure(text) <= room:
+            return text
+        while text and font.measure(text + "\u2026") > room:
+            text = text[:-1]
+        return text + "\u2026"
 
     def _size_tabs(self):
         """Give the details pane only what is left once the whole sidebar fits (never grows for the Player tab)."""
@@ -650,11 +785,13 @@ class App:
             self.root.update_idletasks()
             body_need = self.side_inner.winfo_reqheight() + self.px(6)
             # what the list area has now + what the pane has now = the room to share; the sidebar gets first call
-            room = self.tree.master.winfo_height() + self.tabs.winfo_height()
-            total = max(self.px(190), min(self.px(340), room - body_need))        # tab strip included
+            strip = self.tabstrip.winfo_height()            # the drawn tab row sits above the Notebook
+            room = self.tree.master.winfo_height() + self.tabs.winfo_height() + strip
+            total = max(self.px(190), min(self.px(340), room - body_need)) - strip   # tab row included
             if abs(total - self.tabs.winfo_height()) > self.px(4):
-                strip = self.tabs.winfo_height() - int(float(str(self.tabs.cget("height")) or 0)) if int(float(str(self.tabs.cget("height")) or 0)) else self.px(42)
-                self.tabs.configure(height=max(self.px(100), total - max(strip, 0)))
+                conf = int(float(str(self.tabs.cget("height")) or 0))
+                edge = self.tabs.winfo_height() - conf if conf else 0   # Notebook borders around the page
+                self.tabs.configure(height=max(self.px(100), total - max(edge, 0)))
         except (tk.TclError, AttributeError):
             pass
 
@@ -688,7 +825,7 @@ class App:
         if tab == "Speed":
             key = sel[0] if len(sel) == 1 else None
             title = self._snap_by_hash[key]["name"] if key else "All torrents"
-            self.graph.draw(self.speed_canvas, key, title, self.P, self.px)
+            self.graph.draw(self.speed_canvas, key, title, self.P, self.px, bg=self._draw_art)
             return
         if tab not in self.tab_trees:
             return
@@ -909,10 +1046,7 @@ class App:
         if ext:
             (ext.stop if stop else ext.release if detach else ext._stop_watching)()
         self._ext = None
-        for w in self.player_tab.winfo_children():
-            w.destroy()
-        self._player_hint = tk.Label(self.player_tab, text="Press Play on a torrent to watch it here.", bg=self.P["bg"], fg=self.P["muted"])
-        self._player_hint.place(relx=0.5, rely=0.5, anchor="center")
+        self._player_idle("Press Play on a torrent to watch it here.")
 
     def _ext_failed(self, why):
         self.log("Could not show the player in the tab: %s It stays in its own window." % why)
@@ -960,10 +1094,7 @@ class App:
         panel._save_pos()
         panel.close()
         self._panel = None
-        for w in self.player_tab.winfo_children():
-            w.destroy()
-        tk.Label(self.player_tab, text="The player is in its own window. Press Attach there to bring it back here.",
-                 bg=self.P["bg"], fg=self.P["muted"]).pack(expand=True)
+        self._player_idle("The player is in its own window. Press Attach there to bring it back here.")
         player_mod.PlayerWindow(self.root, queue=queue, index=idx, session=sess, lib=lib, on_dock=self.dock_player)
 
     def dock_player(self, win):
@@ -1322,6 +1453,8 @@ class App:
             self.chrome.restyle(self.P)
         if getattr(self, "empty", None) is not None:
             self.root.after_idle(self._layout_art)
+        if getattr(self, "tabstrip", None) is not None:
+            self._redraw_details()
         self._bar_style.clear()
         self._paint_sidebar()
         self.place_bars()
@@ -2231,20 +2364,19 @@ class App:
         self._empty_shown = show
         self._layout_art()
 
+    def _draw_list_art(self, c):
+        """The list draws the aurora full size behind its rows, so adding torrents never shrinks it."""
+        art = self._art()
+        if art is not None:
+            c.create_image(c.winfo_width() // 2, c.winfo_height() // 2, image=art)
+
     def _layout_art(self):
-        """The aurora artwork sits behind the list: it fills the part below the last row (all of it when empty)."""
+        """With no rows shown, the empty-state canvas (same artwork, plus the hint) covers the list."""
         try:
-            kids = self.tree.get_children()
-            top = 0
-            if kids:
-                bb = self.tree.bbox(kids[-1])
-                if not bb:                                   # rows overflow the table: no room for artwork
-                    self.empty.place_forget(); return
-                top = bb[1] + bb[3]
-            room = self.tree.winfo_height() - top
-            if room < self.px(70):
+            if self.tree.get_children():
                 self.empty.place_forget(); return
-            self.empty.place(x=self.tree.winfo_x(), y=self.tree.winfo_y() + top, width=self.tree.winfo_width(), height=room)
+            self.empty.place(x=self.tree.winfo_x(), y=self.tree.winfo_y(), width=self.tree.winfo_width(),
+                             height=self.tree.winfo_height())
             try:
                 tk.Misc.tkraise(self.empty)           # (Canvas.lift would raise a canvas item instead)
             except AttributeError:

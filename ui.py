@@ -182,6 +182,11 @@ def style_ttk(root, P, F, px):
     st.configure("TLabelframe.Label", background=P["bg"], foreground=P["muted"], font=F.bold)
 
     st.configure("TNotebook", background=P["bg"], borderwidth=0, tabmargins=(0, 0, 0, 0))
+    # main window details pane: pages only, the tab row is drawn by the App over the artwork
+    st.configure("Bare.TNotebook", background=P["bg"], borderwidth=0, tabmargins=(0, 0, 0, 0),
+                 bordercolor=P["bg"], lightcolor=P["bg"], darkcolor=P["bg"])   # no frame line through the artwork
+    st.layout("Bare.TNotebook", [])          # no client element: clam would inset the page 2 px (a seam in the art)
+    st.layout("Bare.TNotebook.Tab", [])
     st.configure("TNotebook.Tab", padding=(px(18), px(8)), background=P["hover"], foreground=P["muted"], borderwidth=0)
     tabpad = (px(18), px(8))
     st.configure("TNotebook.Tab", lightcolor=P["hover"], bordercolor=P["hover"], focuscolor=P["hover"])

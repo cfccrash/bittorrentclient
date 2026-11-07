@@ -47,13 +47,16 @@ class SpeedGraph:
         for key in [k for k in self.hist if k is not None and k not in alive]:
             del self.hist[key]
 
-    def draw(self, canvas, key, title, P, px):
+    def draw(self, canvas, key, title, P, px, bg=None):
+        """`bg(canvas)` paints a background first (the app's artwork)."""
         canvas.delete("all")
+        if bg:
+            bg(canvas)
         w, h = max(canvas.winfo_width(), 50), max(canvas.winfo_height(), 40)
         samples = list(self.hist.get(key, ()))
         peak = max([max(d, u) for d, u in samples] + [1.0])
         peak = _nice_ceiling(peak)
-        pad_l, pad_r, pad_t, pad_b = px(8), px(8), px(26), px(8)
+        pad_l, pad_r, pad_t, pad_b = px(20), px(20), px(30), px(12)   # page has no padding of its own
         gw, gh = w - pad_l - pad_r, h - pad_t - pad_b
         for i in range(4):                                   # grid lines with the scale on the left
             y = pad_t + gh * i / 3
@@ -72,7 +75,7 @@ class SpeedGraph:
             if len(pts) >= 4:
                 canvas.create_line(*pts, fill=color, width=max(2, px(2)), smooth=False)
         d, u = samples[-1] if samples else (0.0, 0.0)
-        canvas.create_text(pad_l, px(12), anchor="w", fill=P["fg"],
+        canvas.create_text(pad_l, px(14), anchor="w", fill=P["fg"],
                            text="%s     ↓ %s     ↑ %s" % (title, fmt_rate(d), fmt_rate(u)))
 
 
