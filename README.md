@@ -371,3 +371,6 @@ downloaded yet waits for it instead of failing.
 1. Once: create a **public** GitHub repository `cfccrash/bittorrentclient-releases` (empty is fine).
 2. Once: create a fine-grained personal access token with access to **only** that repository and the permission *Contents: Read and write*; add it to this (private) repository under *Settings → Secrets and variables → Actions* as `RELEASES_TOKEN`.
 3. Each release: bump `version.py`, add its `### x.y.z` section here, commit, then push a matching tag: `git tag v1.9.21` and `git push origin v1.9.21`. The GitHub build makes the installer and publishes it as a release there, with that section as the notes; installed copies pick it up within a day.
+4. Share **https://github.com/cfccrash/bittorrentclient-releases** (front page with screenshots) or the direct, never-changing
+   download link **https://github.com/cfccrash/bittorrentclient-releases/releases/latest/download/BitTorrentClient-Setup.exe**
+   (each release also carries the installer under that fixed name; the updater uses the versioned one).

@@ -63,4 +63,8 @@ jobs:
           $tag = "${{ github.ref_name }}"
           if ($tag.TrimStart("v") -ne $ver) { Write-Error "Tag $tag does not match version.py ($ver)."; exit 1 }
           python -c "import re,sys; t=open('README.md',encoding='utf-8').read(); m=re.search(r'^### '+re.escape(sys.argv[1])+r'\s*\n(.*?)(?=^### |\Z)', t, re.S|re.M); open('notes.md','w',encoding='utf-8').write(m.group(1).strip() if m else 'Bit Torrent Client '+sys.argv[1])" $ver
-          gh release create $tag (Get-ChildItem installer\*.exe).FullName BitTorrentClient-portable.zip --repo $repo --title "Bit Torrent Client $ver" --notes-file notes.md
+          # also a copy under a fixed name, so .../releases/latest/download/BitTorrentClient-Setup.exe never changes
+          # (the app's updater only picks the versioned name: BitTorrentClient-Setup-<version>.exe)
+          $setup = (Get-ChildItem installer\BitTorrentClient-Setup-*.exe).FullName
+          Copy-Item $setup BitTorrentClient-Setup.exe
+          gh release create $tag $setup BitTorrentClient-Setup.exe BitTorrentClient-portable.zip --repo $repo --title "Bit Torrent Client $ver" --notes-file notes.md
