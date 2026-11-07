@@ -47,7 +47,7 @@ def _hwnd(win):
 
 class Chrome:
     def __init__(self, win, P, px, title="", main=False, resizable=True, buttons=("min", "max", "close"), on_close=None,
-                 font=None, before=None):
+                 font=None, before=None, snap=False):
         self.win, self.P, self.px, self.main = win, P, px, main
         win._chrome = self
         self.resizable = resizable
@@ -61,7 +61,11 @@ class Chrome:
         self.h = px(38 if main else 34)
         self.font = font or tkfont.Font(family="Segoe UI", size=10, weight="bold")
         self.bw = px(46)                                                   # width of each caption button
-        win.overrideredirect(True)
+        # snap: keep a real Windows frame (hidden behind our strip) so Snap Layouts, drag-to-edge snapping, Win+arrows
+        # and native resizing work - see NativeFrame. Otherwise: a borderless window that we move and size ourselves.
+        self.native = NativeFrame(self) if (snap and os.name == "nt" and resizable) else None
+        if not self.native:
+            win.overrideredirect(True)
         try:
             win.configure(highlightthickness=1, highlightbackground=P["border"], highlightcolor=P["border"])
         except tk.TclError:
@@ -82,7 +86,7 @@ class Chrome:
         self.bar.bind("<Double-Button-1>", self._double)
         win.bind("<Alt-F4>", lambda e: self.close())
         self.grips = []
-        if resizable:
+        if resizable and not self.native:                              # a native frame resizes from its own edges
             self._make_grips()
         self._press_info = None
         win.after(30, self._after_map)
@@ -223,6 +227,9 @@ class Chrome:
     def maximize(self):
         if self.maxed or self.full:
             return
+        if self.native:                       # a real maximise: Windows keeps the restore size, Win+Down undoes it
+            self.native.show(3)               # SW_MAXIMIZE
+            return
         import ui
         self.normal_geo = self.win.geometry()
         x, y, w, h = ui.work_area(self.win)
@@ -233,6 +240,9 @@ class Chrome:
 
     def restore(self):
         if not self.maxed:
+            return
+        if self.native:
+            self.native.show(9)               # SW_RESTORE
             return
         self.maxed = False
         if self.normal_geo:
@@ -317,6 +327,9 @@ class Chrome:
         self.lift_grips()
         if os.name != "nt":
             return
+        if self.native:
+            self.native.install()
+            return
         try:
             import ctypes
             from ctypes import wintypes
@@ -337,6 +350,129 @@ class Chrome:
             dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(v), ctypes.sizeof(v))          # rounded corners (Windows 11)
         except Exception:
             pass
+
+
+class NativeFrame:
+    """A real Windows frame whose title bar is replaced by the Chrome strip, so Windows treats the window like any
+    other: drag the strip to snap it to an edge, hover the maximise button for Snap Layouts (Windows 11),
+    Win+arrow keys, double-click to maximise, resize from the edges.
+
+    How: the window keeps WS_OVERLAPPEDWINDOW; its procedure is subclassed so that
+      WM_NCCALCSIZE says the whole window is client area (no standard title bar or border is drawn), and
+      WM_NCHITTEST tells Windows what is under the pointer - edges -> resize, the strip -> caption, our maximise
+      button -> HTMAXBUTTON (that is what shows the Snap Layouts flyout).
+    The procedure runs inside Windows' message dispatch, so it never calls Tk: it works from Win32 calls and plain
+    numbers; maximise-button hover and the maximised state are picked up by a short Tk timer (poll)."""
+    HTCLIENT, HTCAPTION, HTMAXBUTTON = 1, 2, 9
+    EDGES = {(0, 0): 13, (1, 0): 12, (2, 0): 14, (0, 1): 10, (2, 1): 11, (0, 2): 16, (1, 2): 15, (2, 2): 17}
+
+    def __init__(self, chrome):
+        self.c = chrome
+        self.hwnd = None
+        self._proc = self._old = None
+        self.nc_hover = False          # pointer over our maximise button (non-client area: Tk does not see it)
+        self.zoomed = False
+
+    # -- set up
+    def install(self):
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        self.u, self.ct, self.wt = u, ctypes, wintypes
+        LRESULT = ctypes.c_ssize_t
+        self.WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+        u.CallWindowProcW.restype = LRESULT
+        u.CallWindowProcW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        u.SetWindowLongPtrW.restype = ctypes.c_void_p
+        u.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+        u.GetParent.restype = wintypes.HWND
+        u.GetParent.argtypes = [wintypes.HWND]
+        u.IsZoomed.argtypes = [wintypes.HWND]
+        u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        u.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        u.ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+        u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        u.GetSystemMetrics.argtypes = [ctypes.c_int]
+        win = self.c.win
+        self.hwnd = u.GetParent(win.winfo_id()) or win.winfo_id()
+        self._proc = self.WNDPROC(self._wndproc)                      # keep a reference: freed callbacks crash
+        self._old = u.SetWindowLongPtrW(self.hwnd, -4, self.ct.cast(self._proc, ctypes.c_void_p))   # GWLP_WNDPROC
+        u.SetWindowPos(self.hwnd, None, 0, 0, 0, 0, 0x0027)            # SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER
+        try:
+            dwm = ctypes.windll.dwmapi
+            v = ctypes.c_int(2)
+            dwm.DwmSetWindowAttribute(self.hwnd, 33, ctypes.byref(v), ctypes.sizeof(v))   # rounded corners (Windows 11)
+        except Exception:
+            pass
+        self._poll()
+
+    def show(self, cmd):
+        if self.hwnd:
+            self.u.ShowWindow(self.hwnd, cmd)
+            self.c.maxed = bool(self.u.IsZoomed(self.hwnd))
+            self.c.draw()
+
+    # -- Tk side: reflect what happened in the window procedure
+    def _poll(self):
+        c = self.c
+        try:
+            z = bool(self.u.IsZoomed(self.hwnd))
+            hov = "max" if self.nc_hover else (c.hover if c.hover != "max" else None)
+            if z != c.maxed or hov != c.hover:
+                c.maxed, c.hover = z, hov
+                c.draw()
+            c.win.after(60, self._poll)
+        except Exception:
+            pass
+
+    # -- the window procedure
+    def _frame_size(self):
+        g = self.u.GetSystemMetrics
+        return g(32) + g(92)          # SM_CXSIZEFRAME + SM_CXPADDEDBORDER
+
+    def _wndproc(self, hwnd, msg, wp, lp):
+        try:
+            if msg == 0x0083 and wp:                                   # WM_NCCALCSIZE: all of it is client area
+                if self.u.IsZoomed(hwnd):                              # a maximised window overhangs the screen by its frame
+                    r = self.ct.cast(lp, self.ct.POINTER(self.wt.RECT)).contents
+                    f = self._frame_size()
+                    r.left += f; r.top += f; r.right -= f; r.bottom -= f
+                return 0
+            if msg == 0x0084:                                          # WM_NCHITTEST
+                return self._hit(hwnd, lp)
+            if msg in (0x00A0, 0x02A2):                                # WM_NCMOUSEMOVE / WM_NCMOUSELEAVE
+                self.nc_hover = msg == 0x00A0 and wp == self.HTMAXBUTTON
+            if wp == self.HTMAXBUTTON and msg in (0x00A1, 0x00A3):     # WM_NCLBUTTONDOWN / DBLCLK on our button
+                return 0
+            if wp == self.HTMAXBUTTON and msg == 0x00A2:               # WM_NCLBUTTONUP: maximise / restore
+                self.u.ShowWindow(hwnd, 9 if self.u.IsZoomed(hwnd) else 3)
+                return 0
+        except Exception:
+            pass
+        return self.u.CallWindowProcW(self._old, hwnd, msg, wp, lp)
+
+    def _hit(self, hwnd, lp):
+        ct, wt, u = self.ct, self.wt, self.u
+        x, y = ct.c_short(lp & 0xFFFF).value, ct.c_short((lp >> 16) & 0xFFFF).value
+        wr = wt.RECT(); u.GetWindowRect(hwnd, ct.byref(wr))
+        zoomed = u.IsZoomed(hwnd)
+        if not zoomed:                                                 # resize from the edges (and corners)
+            b = max(4, self.c.px(6))
+            col = 0 if x < wr.left + b else 2 if x >= wr.right - b else 1
+            row = 0 if y < wr.top + b else 2 if y >= wr.bottom - b else 1
+            if (col, row) != (1, 1):
+                return self.EDGES[(col, row)]
+        pt = wt.POINT(x, y); u.ScreenToClient(hwnd, ct.byref(pt))
+        cr = wt.RECT(); u.GetClientRect(hwnd, ct.byref(cr))
+        c = self.c
+        if c.full or pt.y < 0 or pt.y >= c.h:
+            return self.HTCLIENT
+        right = cr.right                                              # caption buttons from the right: ... min, max, close
+        for i, name in enumerate(reversed(c.buttons)):
+            if right - (i + 1) * c.bw <= pt.x < right - i * c.bw:
+                return self.HTMAXBUTTON if name == "max" else self.HTCLIENT   # min / close stay Tk buttons
+        return self.HTCAPTION
 
 
 def attach(win, P, px, title="", main=False, resizable=True, **kw):

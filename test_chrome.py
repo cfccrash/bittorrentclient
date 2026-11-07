@@ -18,16 +18,41 @@ def main():
     t_end = time.time() + 0.3   # on Windows chrome._after_map withdraws + re-shows the window ~50 ms after start;
     while time.time() < t_end:  # let that finish, or it restores the old size over the resize below
         root.update(); time.sleep(0.02)
-    assert app.chrome and root.overrideredirect(), "main window not frameless"
     c = app.chrome
-    g0 = root.geometry()
-    c.maximize(); root.update(); assert c.maxed
-    c.restore(); root.update(); assert not c.maxed and root.geometry() == g0, (root.geometry(), g0)
-    # resize grip drag
-    w0 = root.winfo_width()
-    c._rs_start(type("E", (), dict(x_root=0, y_root=0))(), "e")
-    c._rs_move(type("E", (), dict(x_root=80, y_root=0))()); root.update()
-    assert root.winfo_width() == w0 + 80, (root.winfo_width(), w0)
+    if os.name == "nt":
+        # the main window keeps a real Windows frame behind the Aurora strip (Snap Layouts, Win+arrows, edge snapping)
+        import ctypes
+        from ctypes import wintypes
+        assert c and c.native and c.native.hwnd and not root.overrideredirect(), "main window should have a native frame"
+        u = ctypes.windll.user32
+        u.SendMessageW.restype = ctypes.c_ssize_t
+        u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        r = wintypes.RECT(); u.GetWindowRect(c.native.hwnd, ctypes.byref(r))
+        hit = lambda x, y: u.SendMessageW(c.native.hwnd, 0x84, 0, (y & 0xFFFF) << 16 | (x & 0xFFFF))   # WM_NCHITTEST
+        mid_y = r.top + c.h // 2
+        assert hit((r.left + r.right) // 2, mid_y) == 2, "title strip must be the caption (drag, snap, double-click)"
+        assert hit(r.right - c.bw - c.bw // 2, mid_y) == 9, "our maximise button must be HTMAXBUTTON (Snap Layouts)"
+        assert hit(r.right - c.bw // 2, mid_y) == 1, "close stays a Tk button"
+        assert hit(r.left + 1, (r.top + r.bottom) // 2) == 10 and hit((r.left + r.right) // 2, (r.top + r.bottom) // 2) == 1
+        c.maximize(); root.update()
+        assert c.maxed and u.IsZoomed(c.native.hwnd)
+        c.restore(); root.update()
+        assert not c.maxed and not u.IsZoomed(c.native.hwnd)
+        mw, mh = root.minsize()
+        assert mw <= app.px(700) and mh <= app.px(400), "small enough to snap side by side / into quarters"
+    else:
+        assert c and root.overrideredirect(), "main window not frameless"
+        g0 = root.geometry()
+        c.maximize(); root.update(); assert c.maxed
+        c.restore(); root.update(); assert not c.maxed and root.geometry() == g0, (root.geometry(), g0)
+        # resize grip drag
+        w0 = root.winfo_width()
+        c._rs_start(type("E", (), dict(x_root=0, y_root=0))(), "e")
+        c._rs_move(type("E", (), dict(x_root=80, y_root=0))()); root.update()
+        assert root.winfo_width() == w0 + 80, (root.winfo_width(), w0)
+    # toolbar: the part over the sidebar is exactly as wide as the sidebar column below it
+    root.update()
+    assert app._tb_left.winfo_width() == app._side.winfo_width(), (app._tb_left.winfo_width(), app._side.winfo_width())
     # dialogs get a strip and a close button
     dlg = dialogs.AboutDialog(app); root.update()
     assert dlg.chrome and dlg.overrideredirect()

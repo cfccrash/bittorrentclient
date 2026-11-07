@@ -26,6 +26,9 @@ Current version is in `version.py`; release notes are the sections at the bottom
   Treeview row methods, shadowing Canvas ones: inside it use `tk.Canvas.delete(self, ...)` for canvas items. Details pane art = `App._draw_art(c)`.
 
 ## Things learned the hard way (Windows behaviour I could not test from Linux)
+- Main window = `chrome.NativeFrame` (snap=True): a real WS_OVERLAPPEDWINDOW with a subclassed wndproc - WM_NCCALCSIZE
+  removes the standard frame, WM_NCHITTEST maps strip -> HTCAPTION, our max button -> HTMAXBUTTON (Snap Layouts), edges -> resize.
+  The wndproc must not call Tk (it runs inside Windows' dispatch); a 60 ms poll mirrors IsZoomed/hover. Dialogs stay borderless.
 - Frameless windows (`overrideredirect`) are not stacked by Windows like owned dialogs: modal dialogs must stay `-topmost`, and must never `wait_visibility()`;
   otherwise a dialog can hide behind another window while holding the grab = "app froze". See `_Dialog.show`.
 - Tk `Canvas.lift/tkraise` raise canvas *items*; use `tk.Misc.tkraise(widget)`.

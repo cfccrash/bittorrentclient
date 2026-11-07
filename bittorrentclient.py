@@ -176,7 +176,8 @@ class App:
         dialogs.install_messageboxes(self)
         root.bind("<Unmap>", lambda e: ui.Tooltip.hide_all() if e.widget is root else None, add="+")
         root.bind("<FocusOut>", lambda e: ui.Tooltip.hide_all() if e.widget is root else None, add="+")
-        self.chrome = chrome.attach(root, self.P, self.px, APP, main=True, font=self.F.bold) if chrome.enabled(self.cfg) else None
+        self.chrome = chrome.attach(root, self.P, self.px, APP, main=True, font=self.F.bold, snap=True) \
+            if chrome.enabled(self.cfg) else None       # snap: real Windows frame behind the Aurora strip (Snap Layouts etc.)
 
         # The status bar and details panel are packed against the bottom *before* the table, so when the window is
         # short it is the table that shrinks - the info bar can never be pushed off the bottom of the window.
@@ -189,6 +190,7 @@ class App:
         main = self._frame(self.root, "bg")
         main.pack(fill="both", expand=True)
         self._build_sidebar(main)
+        self._fit_column()
         self._frame(main, "border", width=1).pack(side="left", fill="y")
         self._build_table(main)
         self._build_menu()
@@ -331,7 +333,9 @@ class App:
         need_h = r.winfo_reqheight()
         w = min(self.px(1120), aw - self.px(40))
         h = min(max(self.px(740), need_h), ah - self.px(20))
-        r.minsize(min(self.px(900), w), min(max(need_h, self.px(460)), h))
+        # small enough to snap side by side / into quarters (half a 1080p-class screen at any scaling); the sidebar
+        # scrolls and the list shrinks when the window is that small
+        r.minsize(min(self.px(700), w), min(self.px(400), h))
         r.geometry("%dx%d+%d+%d" % (w, h, ax + (aw - w) // 2, ay + (ah - h) // 2))
 
     def _set_icon(self):
@@ -368,28 +372,32 @@ class App:
         self.btn = {}
         # Left part: exactly as wide as the sidebar below, ending in the same dividing line, so the app's own
         # buttons sit over the sidebar and the torrent actions start where the list starts.
-        left = self._frame(bar, "surface", width=self.px(176))
+        left = self._tb_left = self._frame(bar, "surface", width=self.px(176))   # width: _fit_column()
         left.pack(side="left", fill="y")
-        left.pack_propagate(False)
-        lrow = self._frame(left, "surface")
-        lrow.pack(side="left", padx=(self.px(8), 0))
+        left.grid_propagate(False)
+        left.grid_rowconfigure(0, weight=1)
+        left.grid_columnconfigure((0, 1, 2), weight=1, uniform="tb")             # three equal slots, icons centred
         self._frame(bar, "border", width=1).pack(side="left", fill="y")     # continues the sidebar's column line
         inner = self._frame(bar, "surface")
         inner.pack(side="left", fill="x", expand=True, padx=(self.px(8), 12), pady=8)
 
         def add(key, icon, text, cmd, tip, parent=inner, raised=False):
-            self._tool(parent, key, icon, text, cmd, tip, raised=raised).pack(side="left", padx=(0, 4))
+            b = self._tool(parent, key, icon, text, cmd, tip, raised=raised)
+            if parent is left:
+                b.grid(row=0, column=len(left.grid_slaves()))
+            else:
+                b.pack(side="left", padx=(0, 4))
 
         def sep():
             self._frame(inner, "border", width=1).pack(side="left", fill="y", padx=10, pady=6)
 
         # over the sidebar: exit / restart (icon only), and Settings as a raised button
         add("exit", ui.ICON_EXIT, "" if self.F.has_icons else "Exit", self.exit_app,
-            "Exit Bit Torrent Client completely (the window's close button only hides it to the tray)", parent=lrow)
+            "Exit Bit Torrent Client completely (the window's close button only hides it to the tray)", parent=left)
         add("restart", ui.ICON_RESTART, "" if self.F.has_icons else "Restart", self.restart, "Restart Bit Torrent Client",
-            parent=lrow)
+            parent=left)
         add("settings", ui.ICON_SETTINGS, "" if self.F.has_icons else "Settings", self.settings_dialog,
-            "Settings: speed limits, encryption, network, theme", parent=lrow, raised=True)
+            "Settings: speed limits, encryption, network, theme", parent=left, raised=True)
         # over the list: actions on the selected torrents
         add("resume", ui.ICON_PLAY, "Resume", self.resume, "Resume the selected torrents")
         add("pause", ui.ICON_PAUSE, "Pause", self.pause, "Pause the selected torrents  (Space)")
@@ -420,8 +428,18 @@ class App:
         self.search.trace_add("write", lambda *_: self.refresh_now())
         Tooltip(box, lambda: "Filter the list by name  (Ctrl+F).  Press Enter to search for it online.", lambda: self.P)
 
+    def _fit_column(self):
+        """The sidebar (and the toolbar part above it) is as wide as its widest item plus a little margin."""
+        try:
+            self.side_inner.update_idletasks()
+            w = max(self.px(140), int(self.side_inner.winfo_reqwidth()) + self.px(14))
+            self._side.configure(width=w)
+            self._tb_left.configure(width=w)
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            pass
+
     def _build_sidebar(self, parent):
-        side = self._frame(parent, "bg", width=self.px(176))
+        side = self._side = self._frame(parent, "bg", width=self.px(176))       # width: _fit_column()
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         # the column scrolls (mouse wheel) when the window is too short for all of it
