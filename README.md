@@ -384,3 +384,6 @@ downloaded yet waits for it instead of failing.
 - Maintenance release, and the first one delivered by the automatic updater: if you have 1.9.21 installed, it offers this version by itself.
 - Release builds use Python 3.14 (as development does) and the current GitHub build actions (the old ones ran on a Node.js version GitHub is retiring).
 - The install instructions at the top of this file point at the public releases page and describe building on an LTSC Windows (no winget).
+
+### 1.9.23
+- Updating now replaces the program's runtime folder completely instead of copying over it, so files an older version installed but a newer one no longer uses are removed (for example, graphics-library files from 1.9.21 were still lying next to the newer ones). Your settings and torrents are not in that folder and are not touched.

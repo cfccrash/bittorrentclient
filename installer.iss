@@ -42,6 +42,12 @@ Name: "torrentassoc"; Description: "Make {#MyAppName} available for .torrent fil
 Name: "magnetassoc"; Description: "Make {#MyAppName} available for magnet links"
 Name: "firewall"; Description: "Allow {#MyAppName} through Windows Firewall (recommended)"; Check: IsAdminInstallMode
 
+[InstallDelete]
+; Updates replace the whole Python runtime folder instead of copying over it: otherwise files a newer build no
+; longer ships stay behind (seen: Tk 8.6 DLLs and _tcl_data/_tk_data from a Python 3.12 build next to Tk 9).
+; Nothing of the user's lives here - settings and torrents are in %APPDATA%\BitTorrentClient.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "dist\BitTorrentClient\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
