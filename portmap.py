@@ -583,8 +583,7 @@ class PortMapper:
             done.append((proto, port))
             if proto == "TCP":
                 tcp_ext = ext
-        self.mapped = done
-        self.external_ip = b.external_ip()
+        self.external_ip = b.external_ip()     # a router round trip: self.mapped is published only after the status
         b.rebooted = False   # we just re-created every mapping, so a pending reboot flag is moot
         listing = self._describe(done)
         if done and not errors:
@@ -605,6 +604,7 @@ class PortMapper:
             self.status4 = "partly forwarded via %s (%s); failed: %s" % (b.name, listing, "; ".join(errors))
         else:
             self.status4 = "%s router refused the mapping: %s" % (b.name, "; ".join(errors))
+        self.mapped = done   # last: whoever sees the mappings also sees the status and external IP that go with them
         if done:  # renew at half the shortest lease (0 = permanent -> hourly check)
             real = [l for l in lifetimes if l > 0]
             return max(60, (min(real) // 2) if real else 3600)

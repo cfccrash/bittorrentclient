@@ -662,6 +662,24 @@ def main():
         igd.close()
         print("UPnP: reached after PCP and NAT-PMP time out; mapped and removed: OK")
 
+        # -- mappings are published together with their status: a reader used to see them while the status still
+        #    said "Searching for router..." (the external-IP round trip happened in between)
+        u = mapper(protocols=("upnp",))
+        seen = []
+
+        class SlowRouter:
+            name, rebooted = "UPnP", False
+            def map(self, proto, port, want):
+                return 3600, want
+            def external_ip(self):            # what anyone reading the mapper sees during this router round trip
+                seen.append((list(u.mapped), u.status))
+                return PUBLIC
+        u.backend, u.status4 = SlowRouter(), "Searching for router..."
+        u._map_all()
+        assert seen == [([], "Searching for router...")], seen
+        assert len(u.mapped) == 2 and "via UPnP" in u.status and "public IP " + PUBLIC in u.status, (u.mapped, u.status)
+        print("mappings published only with their status: OK")
+
         igd = FakeIGD(busy_ext={6881})     # external port taken by another device (error 718): pick the next one
         u = mapper(protocols=("upnp",), ssdp_addr=igd.ssdp_addr); u.start()
         assert wait(lambda: len(u.mapped) == 2, 20), u.status

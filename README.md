@@ -352,3 +352,6 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.17
 - **Fixed the "Windows fatal exception: access violation" entries in the error log.** They were not crashes: setting up the tray icon passed Windows a module handle that ctypes had cut down to 32 bits, Windows caught the resulting fault, and the error log recorded it on every start (or whenever the tray icon appeared). The handle is now passed at full size, so the tray icon is created correctly and the log stays clean.
+
+### 1.9.18
+- Port forwarding: once the router has mapped the ports, the status (e.g. "forwarded … via UPnP (public IP …)") is shown together with them. Before, the mappings were published while the router was still being asked for its public address, so the status bar could briefly keep saying "Searching for router…" (and a self-test failed about one run in seven).
