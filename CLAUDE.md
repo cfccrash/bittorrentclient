@@ -27,6 +27,8 @@ Current version is in `version.py`; release notes are the sections at the bottom
 - Frameless windows (`overrideredirect`) are not stacked by Windows like owned dialogs: modal dialogs must stay `-topmost`, and must never `wait_visibility()`;
   otherwise a dialog can hide behind another window while holding the grab = "app froze". See `_Dialog.show`.
 - Tk `Canvas.lift/tkraise` raise canvas *items*; use `tk.Misc.tkraise(widget)`.
+- ctypes: declare `restype` for every Win32 call returning a handle/pointer (default is 32-bit int: a 64-bit HMODULE
+  gets truncated). faulthandler logs even faults Windows handles, so "access violation" in error.log can mean this.
 - Tooltips must not rely on `<Leave>` alone (watchdog in `ui.Tooltip`).
 - Settings pages/column counts are asserted in tests; update them with the UI.
 - `test_real` selects rows through the Files tab: set `app._tab = "Files"; app._update_tabs()` first.

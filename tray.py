@@ -57,6 +57,15 @@ class Tray:
                         ("szInfoTitle", wintypes.WCHAR * 64), ("dwInfoFlags", wintypes.DWORD)]
         self._NID = NOTIFYICONDATA
 
+        # Every handle must be declared pointer-sized: ctypes' default return type is a 32-bit int, which cut the
+        # module handle in half (0x7ff7... -> 0xffff...). RegisterClassW / CreateWindowExW then read through the bad
+        # handle and raised an access violation that Windows swallowed - but faulthandler logged it on every start.
+        kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+        kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        user32.RegisterClassW.restype = wintypes.ATOM
+        user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASS)]
+        user32.RegisterWindowMessageW.restype = wintypes.UINT
+        user32.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
         user32.DefWindowProcW.restype = LRESULT
         user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         user32.CreateWindowExW.restype = wintypes.HWND

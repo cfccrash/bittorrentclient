@@ -123,6 +123,16 @@ def main():
     assert dark_art is not None and light_art is not None and dark_art is not light_art
     # the main list keeps the artwork full size: with rows present the table itself draws it behind them
     assert app.tree.get_children() == () or not app.empty.winfo_ismapped()
+    # tray icon setup must not fault: a truncated 64-bit module handle made RegisterClassW / CreateWindowExW raise an
+    # access violation that Windows swallowed but faulthandler logged on every start (45 dumps in a user's error.log)
+    import tray, subprocess
+    if tray.available():
+        code = ("import faulthandler, sys, tempfile, os; sys.path.insert(0, %r); p = os.path.join(tempfile.mkdtemp(), 'fh');"
+                "f = open(p, 'w'); faulthandler.enable(f, all_threads=True); import tray; t = tray.Tray(lambda: 0, lambda: 0);"
+                "t._setup(); assert t._hwnd; f.flush(); print('DUMP' if open(p).read().strip() else 'CLEAN')"
+                % os.path.dirname(os.path.abspath(__file__)))
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+        assert r.stdout.strip() == "CLEAN", (r.stdout, r.stderr[-500:])
     print("CHROME TEST: ALL PASSED")
     root.destroy()
 

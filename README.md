@@ -349,3 +349,6 @@ downloaded yet waits for it instead of failing.
 ### 1.9.16
 - **Updating while the app runs:** the installer (and uninstaller) now closes a running copy first instead of stopping at "Setup was unable to automatically close all applications". Closing the window only hides the app to the tray, so Windows' own close request never worked; Setup now runs `BitTorrentClient.exe --quit`, which saves and exits like **Exit** in the tray menu. A copy that does not answer within about 12 s (such as 1.9.15 and older, which do not know `--quit`) is stopped.
 - `BitTorrentClient.exe --quit` can also be used from scripts; it does nothing when the app is not running.
+
+### 1.9.17
+- **Fixed the "Windows fatal exception: access violation" entries in the error log.** They were not crashes: setting up the tray icon passed Windows a module handle that ctypes had cut down to 32 bits, Windows caught the resulting fault, and the error log recorded it on every start (or whenever the tray icon appeared). The handle is now passed at full size, so the tray icon is created correctly and the log stays clean.
