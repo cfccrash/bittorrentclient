@@ -441,7 +441,7 @@ def main():
 
     # ---- settings: sections listed down the left, the chosen page shown beside them
     sdn = dialogs.SettingsDialog(app)
-    assert list(sdn.pages) == ["General", "Media", "Downloads", "Speed", "Connection"] and sdn.current_page == "General"
+    assert list(sdn.pages) == ["General", "Media", "Downloads", "Speed", "Connection", "About"] and sdn.current_page == "General"
     sdn.show_page("Connection"); assert sdn.current_page == "Connection"
     assert sdn.nav_rows["Connection"].opts["bg"] == app.P["sel"] and sdn.nav_rows["General"].opts["bg"] == app.P["bg"]
 

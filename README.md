@@ -341,3 +341,7 @@ downloaded yet waits for it instead of failing.
 - **Light theme artwork:** a light version of the aurora behind the list and details pane (generated from the dark one by `tools/make_light_backdrop.py`).
 - Switching between light and dark while running now also updates the title bar artwork (it kept the dark banner until a restart).
 - `run_tests.py` prints the end of a failing test's output (including errors the app's crash log used to swallow) and keeps the whole output in `test_logs/`.
+
+### 1.9.15
+- **Settings → About:** About is now a page in the Settings list (under Connection) instead of a small button under Updates: version, credits, where your data lives, and Open data folder / Open error log.
+- Building: `build.bat` and the GitHub build find Inno Setup 7 as well as 6.

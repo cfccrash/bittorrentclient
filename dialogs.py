@@ -505,7 +505,6 @@ class SettingsDialog(_Dialog):
         self.update_repo = tk.StringVar(value=cfg.get("update_repo", ""))
         ttk.Entry(box4, textvariable=self.update_repo, width=28).grid(row=0, column=1, sticky="w")
         ttk.Button(box4, text="Check now", command=self._check_update).grid(row=0, column=2, padx=(8, 0))
-        ttk.Button(box4, text="About\u2026", command=lambda: AboutDialog(self.app).show()).grid(row=1, column=2, padx=(8, 0))
         self.update_check = tk.BooleanVar(value=cfg.get("update_check", True))
         ttk.Checkbutton(box4, text="Check for updates when the app starts (about once a day)",
                         variable=self.update_check).grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
@@ -714,6 +713,9 @@ class SettingsDialog(_Dialog):
             fw.columnconfigure(0, weight=1)
             ttk.Label(fw, text=app.fw_text(), style="Muted.TLabel", wraplength=self.px(330), justify="left").grid(row=0, column=0, sticky="w")
             ttk.Button(fw, text="Allow in Windows Firewall", command=app.fix_firewall).grid(row=0, column=1, padx=(12, 0))
+
+        # -- About: version, credits, data folder (the same content as the About window)
+        about_content(tab("About"), app, self.px).grid(row=0, column=0, sticky="nsew")
 
         self.show_page("General")
         btns = ttk.Frame(outer)
@@ -1222,46 +1224,57 @@ class BannedDialog(_Dialog):
 class AboutDialog(_Dialog):
     def __init__(self, app):
         super().__init__(app, "About")
-        import version
-        body = ttk.Frame(self, padding=(28, 24, 28, 20))
+        body = about_content(self, app, self.px, padding=(28, 24, 28, 20), close=self.destroy)
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text=app_name(), style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Version %s" % version.VERSION, style="Muted.TLabel").pack(anchor="w", pady=(2, 12))
-        ttk.Label(body, text="A BitTorrent client written in pure Python: DHT, peer exchange, magnet links, "
-                             "encryption, uTP, automatic port forwarding, categories, seeding rules and more.",
-                  wraplength=self.px(420), justify="left").pack(anchor="w")
-        ttk.Label(body, text="Credits", style="Muted.TLabel").pack(anchor="w", pady=(14, 2))
-        ttk.Label(body, text="Peer locations: IP geolocation by DB-IP.com (CC BY 4.0)\n"
-                             "National flags: flag-icons (MIT)\n"
-                             "Icons: Segoe Fluent Icons / Segoe MDL2 Assets (Windows)",
-                  wraplength=self.px(420), justify="left").pack(anchor="w")
-        ttk.Label(body, text="Your data stays on this computer; the app only talks to trackers, DHT peers and "
-                             "(if you use them) the update check and online search.",
-                  style="Muted.TLabel", wraplength=self.px(420), justify="left").pack(anchor="w", pady=(14, 0))
-        bt = ttk.Frame(body)
-        bt.pack(fill="x", pady=(16, 0))
-        ttk.Button(bt, text="Close", style="Accent.TButton", command=self.destroy).pack(side="right")
-        ttk.Button(bt, text="Open error log", command=self._open_log).pack(side="right", padx=(0, 8))
-        ttk.Button(bt, text="Open data folder", command=self._open_data).pack(side="right", padx=(0, 8))
-        ttk.Label(body, text="Settings, torrents and search plugins live in:\n" + app.dir, style="Muted.TLabel",
-                  wraplength=self.px(420), justify="left").pack(anchor="w", pady=(10, 0))
 
-    def _open_data(self):
-        try:
-            os.startfile(self.app.dir)
-        except (AttributeError, OSError):
-            pass
 
-    def _open_log(self):
-        import crashlog
-        p = crashlog.path
-        try:
-            if p and not os.path.exists(p):
-                open(p, "a").close()
-            os.startfile(p)                   # Windows
-        except (AttributeError, OSError, TypeError):
-            from tkinter import messagebox
-            messagebox.showinfo("Error log", "The error log is here:\n\n%s" % p, parent=self)
+def about_content(parent, app, px, padding=(0, 0, 0, 0), close=None):
+    """Version, description, credits and the data folder, built into a new frame in `parent` (not yet placed).
+    Used by the About window and by the About page in Settings; `close` adds a Close button (the window)."""
+    import version
+    body = ttk.Frame(parent, padding=padding)
+    ttk.Label(body, text=app_name(), style="Title.TLabel").pack(anchor="w")
+    ttk.Label(body, text="Version %s" % version.VERSION, style="Muted.TLabel").pack(anchor="w", pady=(2, 12))
+    ttk.Label(body, text="A BitTorrent client written in pure Python: DHT, peer exchange, magnet links, "
+                         "encryption, uTP, automatic port forwarding, categories, seeding rules and more.",
+              wraplength=px(420), justify="left").pack(anchor="w")
+    ttk.Label(body, text="Credits", style="Muted.TLabel").pack(anchor="w", pady=(14, 2))
+    ttk.Label(body, text="Peer locations: IP geolocation by DB-IP.com (CC BY 4.0)\n"
+                         "National flags: flag-icons (MIT)\n"
+                         "Icons: Segoe Fluent Icons / Segoe MDL2 Assets (Windows)",
+              wraplength=px(420), justify="left").pack(anchor="w")
+    ttk.Label(body, text="Your data stays on this computer; the app only talks to trackers, DHT peers and "
+                         "(if you use them) the update check and online search.",
+              style="Muted.TLabel", wraplength=px(420), justify="left").pack(anchor="w", pady=(14, 0))
+    bt = ttk.Frame(body)
+    bt.pack(fill="x", pady=(16, 0))
+    side = "right" if close else "left"                 # window: buttons on the right; Settings page: on the left
+    if close:
+        ttk.Button(bt, text="Close", style="Accent.TButton", command=close).pack(side="right")
+    for text, fn in (("Open data folder", lambda: _open_data(app)), ("Open error log", lambda: _open_log(body)))[::-1 if close else 1]:
+        ttk.Button(bt, text=text, command=fn).pack(side=side, padx=(0, 8))
+    ttk.Label(body, text="Settings, torrents and search plugins live in:\n" + app.dir, style="Muted.TLabel",
+              wraplength=px(420), justify="left").pack(anchor="w", pady=(10, 0))
+    return body
+
+
+def _open_data(app):
+    try:
+        os.startfile(app.dir)
+    except (AttributeError, OSError):
+        pass
+
+
+def _open_log(parent):
+    import crashlog
+    p = crashlog.path
+    try:
+        if p and not os.path.exists(p):
+            open(p, "a").close()
+        os.startfile(p)                   # Windows
+    except (AttributeError, OSError, TypeError):
+        from tkinter import messagebox
+        messagebox.showinfo("Error log", "The error log is here:\n\n%s" % p, parent=parent)
 
 
 def app_name():
