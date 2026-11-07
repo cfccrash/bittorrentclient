@@ -250,6 +250,27 @@ def main():
         single_instance.release()
         print("single-instance forwarding and release: OK")
 
+        # ---- `BitTorrentClient.exe --quit` (installer / uninstaller): forwarded to the running copy, never opens a window
+        import functools, sys
+        from unittest import mock
+        import bittorrentclient as BC
+        q3 = queue.Queue()
+        assert single_instance.acquire(["running"], q3.put, port=47999) is True
+        real_acquire, old_argv = single_instance.acquire, sys.argv
+        single_instance.acquire = functools.partial(real_acquire, port=47999)
+        try:
+            sys.argv = ["BitTorrentClient.exe", "--quit"]
+            with mock.patch.object(BC.tk, "Tk", side_effect=AssertionError("--quit must not open a window")):
+                BC.main()                                        # a copy is running: hand it --quit
+                assert q3.get(timeout=3) == ["--quit"]
+                single_instance.release()
+                BC.main()                                        # nothing running: just returns
+            assert real_acquire(["again"], q3.put, port=47999) is True, "--quit must not keep the instance port"
+            single_instance.release()
+        finally:
+            single_instance.acquire, sys.argv = real_acquire, old_argv
+        print("--quit: forwarded to a running copy, no window, port left free: OK")
+
         # ---- DHT: six real nodes on loopback (UDP), then trackerless magnet discovery
         first = Manager(0, dht_bootstrap=[])
         boot = [("127.0.0.1", first.dht.port)]

@@ -79,6 +79,50 @@ Filename: "{app}\{#MyAppExe}"; Description: "Start {#MyAppName}"; Flags: nowait 
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#MyAppName}"""; Flags: runhidden; RunOnceId: "RemoveFirewallRule"; Check: IsAdminInstallMode
 
 [Code]
+// The app hides to the tray when Windows asks it to close, so Setup's own "close applications" step cannot stop it.
+// Before installing or uninstalling: ask it to quit (BitTorrentClient.exe --quit saves and exits, 1.9.16+), wait,
+// and only force it if it is still there (older versions ignore --quit; a stuck copy).
+
+function AppRunning(): Boolean;
+var
+  Code: Integer;
+begin
+  // `find` exits 0 when the program is in the task list
+  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq {#MyAppExe}" /NH | find /I "{#MyAppExe}" >nul',
+                 '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+end;
+
+procedure CloseRunningApp(Exe: String);
+var
+  Code, I: Integer;
+begin
+  if not AppRunning() then
+    Exit;
+  Log('Bit Torrent Client is running: asking it to quit');
+  if FileExists(Exe) then
+    Exec(Exe, '--quit', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  for I := 1 to 24 do begin            // up to 12 s: it tells the trackers it is stopping, then saves
+    if not AppRunning() then
+      Exit;
+    Sleep(500);
+  end;
+  Log('Still running: stopping it (and any detached player windows)');
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#MyAppExe}', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Sleep(700);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  CloseRunningApp(ExpandConstant('{app}\{#MyAppExe}'));
+  Result := '';
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  CloseRunningApp(ExpandConstant('{app}\{#MyAppExe}'));
+  Result := True;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   // The app's own "start with Windows" setting writes the same Run value; make sure it is gone.

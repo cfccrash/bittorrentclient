@@ -1764,6 +1764,10 @@ class App:
         try:
             while True:
                 args = self.inbox.get_nowait()
+                if "--quit" in args:          # `BitTorrentClient.exe --quit` (the installer, before an update)
+                    self.log("Asked to quit by another launch (installer / uninstaller)")
+                    self.quit()
+                    return
                 for a in args:
                     if a.lower().startswith("magnet:"):
                         self.add_magnet(a, self.cfg["download_dir"])
@@ -2596,6 +2600,12 @@ def main():
             pass
         import player
         player.main(sys.argv[2:])
+        return
+    if any(a.lower() == "--quit" for a in sys.argv[1:]):
+        # Ask a running copy to save and exit (used by the installer and uninstaller), then stop; never opens a window.
+        # Closing the main window only hides it to the tray, so Windows' own "close the app" request is not enough.
+        if single_instance.acquire(["--quit"], lambda a: None):
+            single_instance.release()                       # nothing was running
         return
     args = [a for a in sys.argv[1:]
             if a.lower().startswith("magnet:") or (a.lower().endswith(".torrent") and os.path.isfile(a))]

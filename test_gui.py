@@ -170,6 +170,8 @@ def main():
     inbox.put(["magnet:?xt=urn:btih:%s&dn=Zeta&tr=udp://127.0.0.1:9/a" % h1])
     app.poll(); time.sleep(0.3); app.refresh()
     assert app._empty_shown is False and h1 in app.tree.rows
+    with mock.patch.object(app, "quit") as q:          # `--quit` forwarded by the installer: a clean exit, no prompt
+        inbox.put(["--quit"]); app.poll(); q.assert_called_once()
     vals = app.tree.rows[h1]["values"]
     assert vals[0] == "Zeta" and "Fetching metadata" in vals[3], vals
     assert app.bar_kind[h1] == "Check", app.bar_kind

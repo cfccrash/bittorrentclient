@@ -345,3 +345,7 @@ downloaded yet waits for it instead of failing.
 ### 1.9.15
 - **Settings → About:** About is now a page in the Settings list (under Connection) instead of a small button under Updates: version, credits, where your data lives, and Open data folder / Open error log.
 - Building: `build.bat` and the GitHub build find Inno Setup 7 as well as 6.
+
+### 1.9.16
+- **Updating while the app runs:** the installer (and uninstaller) now closes a running copy first instead of stopping at "Setup was unable to automatically close all applications". Closing the window only hides the app to the tray, so Windows' own close request never worked; Setup now runs `BitTorrentClient.exe --quit`, which saves and exits like **Exit** in the tray menu. A copy that does not answer within about 12 s (such as 1.9.15 and older, which do not know `--quit`) is stopped.
+- `BitTorrentClient.exe --quit` can also be used from scripts; it does nothing when the app is not running.
