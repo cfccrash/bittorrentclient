@@ -501,15 +501,14 @@ class SettingsDialog(_Dialog):
         box4 = ttk.LabelFrame(g, text="Updates", padding=14)
         box4.grid(row=3, column=0, sticky="ew", pady=(14, 0))
         box4.columnconfigure(1, weight=1)
-        ttk.Label(box4, text="GitHub repository").grid(row=0, column=0, sticky="w", padx=(0, 12))
-        self.update_repo = tk.StringVar(value=cfg.get("update_repo", ""))
-        ttk.Entry(box4, textvariable=self.update_repo, width=28).grid(row=0, column=1, sticky="w")
-        ttk.Button(box4, text="Check now", command=self._check_update).grid(row=0, column=2, padx=(8, 0))
         self.update_check = tk.BooleanVar(value=cfg.get("update_check", True))
-        ttk.Checkbutton(box4, text="Check for updates when the app starts (about once a day)",
-                        variable=self.update_check).grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        ttk.Label(box4, text="Enter the repository that publishes releases, as owner/name.",
-                  style="Muted.TLabel").grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(box4, text="Keep Bit Torrent Client up to date automatically",
+                        variable=self.update_check).grid(row=0, column=0, sticky="w")
+        ttk.Button(box4, text="Check now", command=self._check_update).grid(row=0, column=2, padx=(8, 0))
+        ttk.Label(box4, text="About once a day it looks for a new version and downloads it in the background, then asks "
+                             "before installing (or installs it when you next exit).",
+                  style="Muted.TLabel", wraplength=self.px(470), justify="left").grid(row=1, column=0, columnspan=3,
+                                                                                       sticky="w", pady=(8, 0))
 
         # -- Media (playing while downloading)
         md = tab("Media")
@@ -772,7 +771,6 @@ class SettingsDialog(_Dialog):
         self._cat_fill()
 
     def _check_update(self):
-        self.app.cfg["update_repo"] = self.update_repo.get().strip()
         self.app.check_updates(manual=True, parent=self)
 
     def _banned(self):
@@ -858,7 +856,7 @@ class SettingsDialog(_Dialog):
                            download_dir=self.folder.get().strip() or self.app.cfg["download_dir"],
                            seed_ratio=seed_ratio, seed_minutes=seed_minutes,
                            seed_action=SEED_ACTIONS[self.seed_action.get()], done_dir=self.done_dir.get().strip(),
-                           categories=dict(self.categories), update_repo=self.update_repo.get().strip(),
+                           categories=dict(self.categories),
                            update_check=bool(self.update_check.get()),
                            player=PLAYER_CHOICES[self.player_mode.get()], libmpv=self.libmpv.get().strip(),
                            player_exe=self.player_exe.get().strip(), player_where=WHERE_CHOICES[self.player_where.get()],

@@ -74,6 +74,8 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#MyAppName}"" dir=in action=allow program=""{app}\{#MyAppExe}"" enable=yes profile=any"; Flags: runhidden; Tasks: firewall; Check: IsAdminInstallMode
 Filename: "ms-settings:defaultapps"; Description: "Choose {#MyAppName} as the default app for .torrent files and magnet links"; Flags: shellexec postinstall skipifsilent unchecked
 Filename: "{app}\{#MyAppExe}"; Description: "Start {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; automatic update from inside the app (updater.py passes /RELAUNCH=1): start the new version again, as the user, not elevated
+Filename: "{app}\{#MyAppExe}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunch
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#MyAppName}"""; Flags: runhidden; RunOnceId: "RemoveFirewallRule"; Check: IsAdminInstallMode
@@ -109,6 +111,11 @@ begin
   Log('Still running: stopping it (and any detached player windows)');
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#MyAppExe}', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Sleep(700);
+end;
+
+function ShouldRelaunch(): Boolean;
+begin
+  Result := WizardSilent() and (ExpandConstant('{param:RELAUNCH|0}') = '1');
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

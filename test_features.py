@@ -159,6 +159,42 @@ def main():
     assert sorted(r["name"] for r in merged) == ["x", "y", "z"] and errors == {"Broken": "site down"}, (merged, errors)
     assert next(r for r in merged if r["name"] == "y")["seeders"] == 9 and len(reports) == 3
     print("online search: all sources merged, duplicates dropped, no-limit pages: OK")
+
+    # ---- automatic updates (updater.py): release parsing, verified download, installer command line
+    import hashlib, io, tempfile as _tf
+    import updater
+    blob = b"MZ fake installer" * 1000
+    good = hashlib.sha256(blob).hexdigest()
+    api = {"tag_name": "v9.9.9", "html_url": "https://github.com/x/r/releases/tag/v9.9.9", "assets": [
+        {"name": "BitTorrentClient-portable.zip", "browser_download_url": "https://github.com/x/p.zip", "size": 1},
+        {"name": "BitTorrentClient-Setup-9.9.9.exe", "browser_download_url": "https://github.com/x/s.exe",
+         "size": len(blob), "digest": "sha256:" + good}]}
+    rel = updater.latest(get=lambda url: api)
+    assert rel == {"version": "9.9.9", "url": "https://github.com/x/s.exe", "size": len(blob), "sha256": good,
+                   "page": "https://github.com/x/r/releases/tag/v9.9.9"}, rel
+    assert updater.latest(get=lambda url: {"tag_name": "v1", "assets": []}) is None
+    assert updater.is_newer(rel, "1.9.20") and not updater.is_newer(rel, "9.9.9") and not updater.is_newer(None, "1.0")
+    folder = _tf.mkdtemp()
+    fetched = []
+    opener = lambda url: (fetched.append(url), io.BytesIO(blob))[1]
+    path = updater.download(rel, folder, opener=opener)
+    assert open(path, "rb").read() == blob and path.endswith("BitTorrentClient-Setup-9.9.9.exe")
+    updater.download(rel, folder, opener=opener); assert len(fetched) == 1, "a verified download is reused"
+    bad = dict(rel, version="9.9.8", sha256="0" * 64)
+    try:
+        updater.download(bad, folder, opener=lambda url: io.BytesIO(blob)); raise SystemExit("tampered installer accepted")
+    except ValueError:
+        pass
+    assert not [n for n in os.listdir(folder) if "9.9.8" in n], "a failed download leaves nothing behind"
+    try:
+        updater.download(dict(rel, url="https://evil.example/s.exe"), folder, opener=opener); raise SystemExit("bad host accepted")
+    except ValueError:
+        pass
+    cmd = updater.install_command(path)
+    assert cmd[0] == path and "/SILENT" in cmd and "/RELAUNCH=1" in cmd and ("/ALLUSERS" in cmd or "/CURRENTUSER" in cmd)
+    assert "/RELAUNCH=1" not in updater.install_command(path, relaunch=False)
+    assert updater.can_self_update() is False, "running from source never self-updates"
+    print("automatic updates: release parsing, verified download, tamper / host checks, installer command: OK")
     print("FEATURE TESTS: ALL PASSED")
 
 

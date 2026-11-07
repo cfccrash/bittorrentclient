@@ -1893,56 +1893,75 @@ class App:
             pass
 
     def check_updates(self, manual=False, parent=None):
-        """Ask GitHub for the latest release of the configured repository (in the background)."""
-        import re
-        repo = self.cfg.get("update_repo", "").strip()
-        if not manual and (not self.cfg.get("update_check", True) or not repo
+        """Look for a new version (in the background, about once a day unless `manual`). An installed copy also
+        downloads it; _handle_updates then asks before installing. See updater.py."""
+        import updater
+        if not manual and (not self.cfg.get("update_check", True)
                            or time.time() - self.cfg.get("update_last", 0) < 86400):
             return
-        if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
-            if manual:
-                messagebox.showinfo(APP, "Enter the GitHub repository that publishes releases, as owner/name "
-                                         "(for example  someone/bit-torrent-client).", parent=parent or self.root)
+        if getattr(self, "_update_busy", False):
             return
+        self._update_busy = True
+        folder = os.path.join(self.dir, "updates")
 
         def work():
-            import urllib.request
             try:
-                req = urllib.request.Request("https://api.github.com/repos/%s/releases/latest" % repo,
-                                             headers={"User-Agent": "BitTorrentClient", "Accept": "application/vnd.github+json"})
-                with urllib.request.urlopen(req, timeout=15) as r:
-                    d = json.loads(r.read().decode("utf-8", "replace"))
-                self.updq.put((manual, parent, "ok", (str(d.get("tag_name", "")), str(d.get("html_url", "")))))
+                rel = updater.latest()
+                if not updater.is_newer(rel, version_mod.VERSION):
+                    self.updq.put((manual, parent, "none", rel))
+                elif updater.can_self_update():
+                    self.updq.put((manual, parent, "ready", (rel, updater.download(rel, folder))))
+                else:                                                   # running from source / a portable folder
+                    self.updq.put((manual, parent, "newer", rel))
             except Exception as e:
-                self.updq.put((manual, parent, "err", str(e)))
-        threading.Thread(target=work, daemon=True).start()
-
-    @staticmethod
-    def _ver(text):
-        import re
-        return tuple(int(x) for x in re.findall(r"\d+", text)[:4])
+                self.updq.put((manual, parent, "err", str(e) or e.__class__.__name__))
+        threading.Thread(target=work, name="updater", daemon=True).start()
 
     def _handle_updates(self):
+        import updater
         while True:
             try:
                 manual, parent, kind, val = self.updq.get_nowait()
             except queue.Empty:
                 return
+            self._update_busy = False
             parent = parent if (parent is not None and parent.winfo_exists()) else self.root
             if kind == "err":
+                self.log("Update check failed: %s" % val)
                 if manual:
                     messagebox.showerror(APP, "Could not check for updates:\n\n%s" % val, parent=parent)
                 continue
             self.cfg["update_last"] = time.time()
-            tag, url = val
-            newer = bool(tag) and self._ver(tag) > self._ver(version_mod.VERSION)
-            if newer:
-                if messagebox.askyesno(APP, "Version %s is available (you have %s).\n\nOpen the download page?"
-                                       % (tag.lstrip("vV"), version_mod.VERSION), parent=parent) and url.startswith("https://"):
+            if kind == "none":
+                if manual:
+                    messagebox.showinfo(APP, "You are up to date (version %s)." % version_mod.VERSION, parent=parent)
+            elif kind == "newer":
+                if manual and messagebox.askyesno(APP, "Version %s is available (you have %s).\n\nOpen the download page?"
+                                                  % (val["version"], version_mod.VERSION), parent=parent) \
+                        and val["page"].startswith("https://"):
                     import webbrowser
-                    webbrowser.open(url)
-            elif manual:
-                messagebox.showinfo(APP, "You are up to date (version %s)." % version_mod.VERSION, parent=parent)
+                    webbrowser.open(val["page"])
+            elif kind == "ready":
+                rel, path = val
+                self._update_ready = path
+                self.log("Version %s downloaded and ready to install" % rel["version"])
+                if messagebox.askyesno(APP, "Version %s is ready to install (you have %s).\n\nInstall it now? "
+                                       "Bit Torrent Client closes and reopens by itself; downloads continue afterwards. "
+                                       "Windows may ask for permission.\n\nChoose No to install it when you next exit."
+                                       % (rel["version"], version_mod.VERSION), parent=parent):
+                    self._install_update(relaunch=True)
+
+    def _install_update(self, relaunch):
+        """Run the downloaded installer; it closes this copy with --quit and (if `relaunch`) starts the new one."""
+        import updater
+        path, self._update_ready = getattr(self, "_update_ready", None), None
+        if not path or not os.path.isfile(path):
+            return
+        try:
+            updater.run_installer(path, relaunch=relaunch)
+            self.log("Installing the update")
+        except OSError as e:
+            self.log("Could not start the update installer: %s" % e)
 
     def _hide_temp_tray(self):
         """The icon was only there to show a notification: remove it again, unless the window is hidden to the tray."""
@@ -2588,6 +2607,8 @@ class App:
         self.root.withdraw()
         self.mgr.shutdown()
         self.save_resume()          # after the sessions stopped: the files are closed and their timestamps final
+        if getattr(self, "_update_ready", None) and not getattr(self, "restart_requested", False):
+            self._install_update(relaunch=False)                  # "install when I next exit"
         self.root.destroy()
 
 

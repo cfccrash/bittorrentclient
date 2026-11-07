@@ -67,7 +67,7 @@ def main():
         # settings round trip
         sd = dialogs.SettingsDialog(app); root.update()
         sd.seed_ratio.set("2.5"); sd.seed_minutes.set("90"); sd.seed_action.set("Remove it from the list (keep files)")
-        sd.done_dir.set(os.path.join(tmp, "done")); sd.update_repo.set("a/b"); sd._ok()
+        sd.done_dir.set(os.path.join(tmp, "done")); sd._ok()
         res = sd.result
         assert res["seed_ratio"] == 2.5 and res["seed_minutes"] == 90 and res["seed_action"] == "remove"
         app.apply_settings(**res)
@@ -84,14 +84,24 @@ def main():
         assert os.path.exists(os.path.join(tmp, "done", "one.bin"))
         assert wait(lambda: getattr(app, "_save_pending", False), 5); app.poll()
         assert any(e["dir"] == os.path.join(tmp, "done") for e in __import__("json").load(open(app.state_file))["torrents"])
-        # update check handler
-        with mock.patch.object(B.messagebox, "askyesno", return_value=False) as ask:
-            app.updq.put((False, None, "ok", ("v99.0.0", "https://example.org/r"))); app._handle_updates()
-            assert ask.called
+        # automatic updates: a downloaded update asks first; "No" installs it at the next exit (without relaunching)
+        import updater
+        assert updater.ver("v1.10.0") > updater.ver("1.9.9") and not hasattr(dialogs.SettingsDialog, "update_repo")
+        setup = os.path.join(tmp, "BitTorrentClient-Setup-99.0.0.exe"); open(setup, "wb").write(b"MZ")
+        rel = {"version": "99.0.0", "url": "https://github.com/x", "size": 2, "sha256": None, "page": "https://github.com/r"}
+        with mock.patch.object(B.messagebox, "askyesno", return_value=False) as ask,                 mock.patch.object(updater, "run_installer") as run:
+            app.updq.put((False, None, "ready", (rel, setup))); app._handle_updates()
+            assert ask.called and not run.called and app._update_ready == setup
+            with mock.patch.object(B.messagebox, "askyesno", return_value=True):
+                app.updq.put((False, None, "ready", (rel, setup))); app._handle_updates()
+            run.assert_called_once_with(setup, relaunch=True)
         with mock.patch.object(B.messagebox, "showinfo") as info:
-            app.updq.put((True, None, "ok", ("v0.0.1", ""))); app._handle_updates()
+            app.updq.put((True, None, "none", rel)); app._handle_updates()          # manual check, nothing new
             assert info.called
-        assert app._ver("v1.10.0") > app._ver("1.9.9")
+        with mock.patch.object(B.messagebox, "askyesno", return_value=False) as ask:
+            app.updq.put((False, None, "newer", rel)); app._handle_updates()        # source / portable copy: quiet
+            assert not ask.called
+        app._update_ready = setup                                                    # chosen "later": install at exit
         # search box -> online search window
         app.search.set("ubuntu")
         with mock.patch.object(dialogs.SearchWindow, "run") as run:
@@ -467,7 +477,13 @@ def main():
         root.geometry("900x520"); root.update(); time.sleep(0.2); root.update()
         cv = app.side_inner.master
         assert cv.winfo_height() < app.side_inner.winfo_reqheight() or True
-    app.mgr.shutdown(); root.destroy()
+    # exiting with an update waiting ("install when I next exit"): the installer runs, without restarting the app
+    import updater
+    pending = getattr(app, "_update_ready", None)
+    with mock.patch.object(updater, "run_installer") as run:
+        app.quit()
+    if pending and os.path.isfile(pending):
+        run.assert_called_once_with(pending, relaunch=False)
     print("REAL TK TEST: ALL PASSED")
 
 

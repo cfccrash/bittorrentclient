@@ -48,3 +48,19 @@ jobs:
           path: |
             installer/*.exe
             BitTorrentClient-portable.zip
+      # Version tags (v1.9.21 ...) are published to the PUBLIC releases repository, which the app's updater reads
+      # (updater.RELEASES_REPO). This source repository stays private. RELEASES_TOKEN is a fine-grained token with
+      # "Contents: read and write" on the releases repository only, stored in this repository's Actions secrets.
+      - name: Publish the release for automatic updates
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if (-not $env:GH_TOKEN) { Write-Error "The RELEASES_TOKEN secret is missing (see README: Releases)."; exit 1 }
+          $repo = python -c "import updater; print(updater.RELEASES_REPO)"
+          $ver = python -c "from version import VERSION; print(VERSION)"
+          $tag = "${{ github.ref_name }}"
+          if ($tag.TrimStart("v") -ne $ver) { Write-Error "Tag $tag does not match version.py ($ver)."; exit 1 }
+          python -c "import re,sys; t=open('README.md',encoding='utf-8').read(); m=re.search(r'^### '+re.escape(sys.argv[1])+r'\s*\n(.*?)(?=^### |\Z)', t, re.S|re.M); open('notes.md','w',encoding='utf-8').write(m.group(1).strip() if m else 'Bit Torrent Client '+sys.argv[1])" $ver
+          gh release create $tag (Get-ChildItem installer\*.exe).FullName BitTorrentClient-portable.zip --repo $repo --title "Bit Torrent Client $ver" --notes-file notes.md
