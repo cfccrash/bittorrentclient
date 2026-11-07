@@ -355,3 +355,7 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.18
 - Port forwarding: once the router has mapped the ports, the status (e.g. "forwarded … via UPnP (public IP …)") is shown together with them. Before, the mappings were published while the router was still being asked for its public address, so the status bar could briefly keep saying "Searching for router…" (and a self-test failed about one run in seven).
+
+### 1.9.19
+- **Search online → All sources:** the first entry in the source list searches every source at once (built-in, your plugins and your RSS feeds). Results appear as each site answers; a torrent found on several sites is listed once (the copy with the most seeders); sites that fail are named in the status line and do not stop the others.
+- **No result limit:** a checkbox next to the source list. Each source is asked for everything instead of up to 1000, and plugins that read result pages (they define `MAX_PAGES`) may read up to 100 pages, stopping when a site runs out. Some sites have their own ceiling (the Pirate Bay API returns at most 100). Both choices are remembered.

@@ -123,6 +123,26 @@ def main():
     assert dark_art is not None and light_art is not None and dark_art is not light_art
     # the main list keeps the artwork full size: with rows present the table itself draws it behind them
     assert app.tree.get_children() == () or not app.empty.winfo_ismapped()
+    # Search window: "All sources" searches every source, merges as each one answers, reports the ones that fail
+    import search as _srch
+    mk = lambda h, n: {"name": n, "magnet": "magnet:?xt=urn:btih:" + h * 20, "seeders": 1}
+    def slow(q, limit):
+        time.sleep(0.3); return [mk("22", "both"), mk("33", "only two")]
+    def broken(q, limit):
+        raise OSError("site down")
+    fake = [_srch.Source("One", lambda q, limit: [mk("11", "only one"), mk("22", "both")]), _srch.Source("Two", slow),
+            _srch.Source("Broken", broken)]
+    sw = dialogs.SearchWindow(app, fake, []); root.update()
+    assert sw.combo.cget("values")[0] == _srch.ALL, sw.combo.cget("values")
+    sw.source.set(_srch.ALL); sw.query.set("x"); sw.unlimited.set(True); sw.run()
+    t_end = time.time() + 10
+    while (sw._all is None or sw._all["answered"] < 3) and time.time() < t_end:
+        root.update(); time.sleep(0.05)
+    assert sorted(r["name"] for r in sw.results) == ["both", "only one", "only two"], sw.results
+    assert len(sw.tree.get_children()) == 3 and "from 2 sources" in sw.status.get() and "Broken (site down)" in sw.status.get(), sw.status.get()
+    assert app.cfg["search_source"] == _srch.ALL and app.cfg["search_no_limit"] is True
+    sw.destroy()
+
     # tray icon setup must not fault: a truncated 64-bit module handle made RegisterClassW / CreateWindowExW raise an
     # access violation that Windows swallowed but faulthandler logged on every start (45 dumps in a user's error.log)
     import tray, subprocess

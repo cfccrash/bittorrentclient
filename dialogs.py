@@ -1372,10 +1372,13 @@ class SearchWindow(tk.Toplevel):
         self.entry.pack(side="left", fill="x", expand=True)
         self.entry.bind("<Return>", lambda e: self.run())
         remembered = app.cfg.get("search_source")
-        self.source = tk.StringVar(value=remembered if remembered in [s.name for s in sources] else sources[0].name)
-        self.combo = ttk.Combobox(top, values=[s.name for s in sources], textvariable=self.source, state="readonly",
+        names = self._names(sources)
+        self.source = tk.StringVar(value=remembered if remembered in names else sources[0].name)
+        self.combo = ttk.Combobox(top, values=names, textvariable=self.source, state="readonly",
                                   width=18, postcommand=self.reload_sources)
         self.combo.pack(side="left", padx=8)
+        self.unlimited = tk.BooleanVar(value=bool(app.cfg.get("search_no_limit", False)))
+        ttk.Checkbutton(top, text="No result limit", variable=self.unlimited).pack(side="left", padx=(0, 8))
         ttk.Button(top, text="Search", style="Accent.TButton", command=self.run).pack(side="left")
 
         self.status = tk.StringVar(value="Type what you want to find and press Enter.")
@@ -1433,7 +1436,7 @@ class SearchWindow(tk.Toplevel):
         except Exception:
             return
         self.sources = sources
-        names = [x.name for x in sources]
+        names = self._names(sources)
         self.combo.configure(values=names)
         if self.source.get() not in names:
             self.source.set(names[0])
@@ -1441,29 +1444,62 @@ class SearchWindow(tk.Toplevel):
             self.status.set("Could not load plugin(s): " + "; ".join(errors))
 
     # -- searching ------------------------------------------------------------
+    @staticmethod
+    def _names(sources):
+        """Source list for the drop-down: "All sources" first when there is more than one."""
+        import search
+        names = [x.name for x in sources]
+        return ([search.ALL] if len(names) > 1 else []) + names
+
     def run(self):
+        import search
+        import threading
         self.reload_sources()
         text = self.query.get().strip()
-        src = next((s for s in self.sources if s.name == self.source.get()), self.sources[0])
-        if not text and src.name != "My RSS feeds":      # an empty search lists everything in your feeds
+        every = self.source.get() == search.ALL
+        src = None if every else next((s for s in self.sources if s.name == self.source.get()), self.sources[0])
+        if not text and (every or src.name != "My RSS feeds"):      # an empty search lists everything in your feeds
             return
+        unlimited = bool(self.unlimited.get())
         self._token += 1
         token = self._token
-        if self.app.cfg.get("search_source") != src.name:
-            self.app.cfg["search_source"] = src.name
+        name = search.ALL if every else src.name
+        if self.app.cfg.get("search_source") != name or bool(self.app.cfg.get("search_no_limit")) != unlimited:
+            self.app.cfg["search_source"], self.app.cfg["search_no_limit"] = name, unlimited
             self.app.save()
         self.tree.delete(*self.tree.get_children())
         self.results = []
-        self.status.set("Searching %s…" % src.name)
+        if every:
+            srcs = list(self.sources)
+            self._all = {"total": len(srcs), "answered": 0, "failed": {}}
+            self.status.set("Searching %d sources…" % len(srcs))
 
-        import threading
+            def work_all():
+                search.search_all(srcs, text, unlimited, report=lambda n, res, err: self.q.put((token, "part", (n, res, err))))
+            threading.Thread(target=work_all, daemon=True).start()
+            return
+        self._all = None
+        self.status.set("Searching %s…" % src.name)
 
         def work():
             try:
-                self.q.put((token, "ok", src.search(text, __import__("search").LIMIT)))
+                self.q.put((token, "ok", src.search(text, unlimited=unlimited)))
             except Exception as e:
                 self.q.put((token, "err", "%s: %s" % (src.name, e)))
         threading.Thread(target=work, daemon=True).start()
+
+    def _all_status(self):
+        """Status line while / after searching every source."""
+        a, n = self._all, len(self.results)
+        txt = "%d result%s" % (n, "" if n == 1 else "s")
+        if a["answered"] < a["total"]:
+            txt += " so far - %d of %d sources answered…" % (a["answered"], a["total"])
+        else:
+            txt += " from %d source%s." % (a["total"] - len(a["failed"]), "" if a["total"] - len(a["failed"]) == 1 else "s")
+            txt += " Double-click one to add it." if n else ""
+        if a["failed"]:
+            txt += "  Failed: " + "; ".join("%s (%s)" % (k, v[:60]) for k, v in sorted(a["failed"].items()))
+        return txt
 
     def _poll(self):
         if not self.winfo_exists():
@@ -1474,7 +1510,17 @@ class SearchWindow(tk.Toplevel):
                 token, kind, payload = self.q.get_nowait()
                 if token != self._token:
                     continue
-                if kind == "err":
+                if kind == "part":                       # one source of an "All sources" search answered
+                    import search
+                    name, res, err = payload
+                    self._all["answered"] += 1
+                    if err:
+                        self._all["failed"][name] = err
+                    else:
+                        search.merge(self.results, res)
+                        self.fill()
+                    self.status.set(self._all_status())
+                elif kind == "err":
                     self.status.set("Search failed - " + payload)
                 elif kind == "dl":
                     self._downloaded(payload)

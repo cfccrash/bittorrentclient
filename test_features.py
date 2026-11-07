@@ -127,6 +127,38 @@ def main():
         print("queue priority (high jumps the queue, low yields): OK")
     finally:
         mgr.shutdown()
+
+    # ---- online search: "All sources" (merged, duplicates dropped) and "No result limit"
+    import base64, types
+    import search
+    hx = "ab" * 20
+    b32 = base64.b32encode(bytes.fromhex(hx)).decode()
+    assert search.info_hash({"magnet": "magnet:?xt=urn:btih:%s&dn=x" % hx.upper()}) == hx
+    assert search.info_hash({"magnet": "magnet:?xt=urn:btih:%s" % b32}) == hx, "base32 hashes compare equal to hex"
+    assert search.info_hash({"torrent_url": "http://x/y.torrent"}) is None
+    res = [{"name": "A", "magnet": "magnet:?xt=urn:btih:" + hx, "seeders": 5, "source": "One"}]
+    search.merge(res, [{"name": "A again", "magnet": "magnet:?xt=urn:btih:" + b32, "seeders": 50, "source": "Two"},
+                       {"name": "B", "torrent_url": "http://x/b.torrent", "seeders": None, "source": "Two"},
+                       {"name": "B", "torrent_url": "http://x/b.torrent", "seeders": None, "source": "Two"}])
+    assert [(r["name"], r["source"]) for r in res] == [("A again", "Two"), ("B", "Two"), ("B", "Two")], res
+    # no limit: everything is asked for and a page-based plugin may read more pages - for that search only
+    mod = types.SimpleNamespace(MAX_PAGES=10)
+    asked = []
+    src = search.Source("Paged", lambda q, limit: asked.append((limit, mod.MAX_PAGES)) or [], module=mod)
+    src.search("x"); src.search("x", unlimited=True)
+    assert asked == [(search.LIMIT, 10), (search.NO_LIMIT, search.NO_LIMIT_PAGES)] and mod.MAX_PAGES == 10, (asked, mod.MAX_PAGES)
+    # all sources: run together, merged, a failing source reported without losing the others
+    mk = lambda h, n, s: {"name": n, "magnet": "magnet:?xt=urn:btih:" + h, "seeders": s}
+    def boom(q, limit):
+        raise OSError("site down")
+    srcs = [search.Source("One", lambda q, limit: [mk("11" * 20, "x", 1), mk("22" * 20, "y", 9)]),
+            search.Source("Two", lambda q, limit: [mk("22" * 20, "y", 3), mk("33" * 20, "z", 2)]),
+            search.Source("Broken", boom)]
+    reports = []
+    merged, errors = search.search_all(srcs, "q", report=lambda n, r, e: reports.append((n, e)))
+    assert sorted(r["name"] for r in merged) == ["x", "y", "z"] and errors == {"Broken": "site down"}, (merged, errors)
+    assert next(r for r in merged if r["name"] == "y")["seeders"] == 9 and len(reports) == 3
+    print("online search: all sources merged, duplicates dropped, no-limit pages: OK")
     print("FEATURE TESTS: ALL PASSED")
 
 
