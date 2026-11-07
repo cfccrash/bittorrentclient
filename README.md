@@ -8,16 +8,21 @@ A small BitTorrent client for Windows 11 (Python + Tkinter, no third-party depen
 
 ## Install it on Windows 11
 
-Building produces a proper installer, `BitTorrentClient-Setup-<version>.exe`:
+**Users:** download the installer from the public releases page,
+**https://github.com/cfccrash/bittorrentclient-releases** (direct link:
+`https://github.com/cfccrash/bittorrentclient-releases/releases/latest/download/BitTorrentClient-Setup.exe`).
+Installed copies keep themselves up to date (see 1.9.21 below).
 
-**Option A - on your PC**
-1. Install Python 3.10+ from https://www.python.org/downloads/ (tick "Add python.exe to PATH").
-2. Double-click `build.bat`. It runs the self-test, builds the program, installs Inno Setup 6 with winget if it is
-   missing, then writes `installer\BitTorrentClient-Setup-<version>.exe`.
+**Publishing a release:** bump `version.py`, add its `### x.y.z` section at the end of this file, commit, push, then
+push a matching tag (`git tag v1.9.22`, `git push origin v1.9.22`). The GitHub build tests, builds and publishes it
+there; details under "Releases (for the maintainer)" in the 1.9.21 notes.
 
-**Option B - no install, via GitHub**
-Push this folder to a GitHub repo, open Actions -> "Build Windows installer" -> Run workflow,
-then download the `BitTorrentClient-windows` artifact (the installer plus a portable zip).
+**Building an installer on this PC** (to try a change before releasing it):
+1. Install Python 3.10+ from https://www.python.org/downloads/ (tick "Add python.exe to PATH") and
+   **Inno Setup 6 or 7** from https://jrsoftware.org/isdl.php.
+2. Double-click `build.bat`. It runs the self-test, builds the program, bundles libmpv, then writes
+   `installer\BitTorrentClient-Setup-<version>.exe` (and the program folder `dist\BitTorrentClient`).
+   On Windows editions with winget it can install Inno Setup itself; LTSC / IoT editions have no winget.
 
 **Running the installer**
 - Installs for you only by default (no administrator prompt); choose "for all users" on the first page to install
@@ -374,3 +379,8 @@ downloaded yet waits for it instead of failing.
 4. Share **https://github.com/cfccrash/bittorrentclient-releases** (front page with screenshots) or the direct, never-changing
    download link **https://github.com/cfccrash/bittorrentclient-releases/releases/latest/download/BitTorrentClient-Setup.exe**
    (each release also carries the installer under that fixed name; the updater uses the versioned one).
+
+### 1.9.22
+- Maintenance release, and the first one delivered by the automatic updater: if you have 1.9.21 installed, it offers this version by itself.
+- Release builds use Python 3.14 (as development does) and the current GitHub build actions (the old ones ran on a Node.js version GitHub is retiring).
+- The install instructions at the top of this file point at the public releases page and describe building on an LTSC Windows (no winget).

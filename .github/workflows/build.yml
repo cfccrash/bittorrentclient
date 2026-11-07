@@ -7,10 +7,10 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"   # same as the development PC
       - name: Install PyInstaller
         run: python -m pip install --upgrade pyinstaller
       - name: Self-test
@@ -42,7 +42,7 @@ jobs:
       - name: Zip the portable program folder
         shell: pwsh
         run: Compress-Archive -Path dist\BitTorrentClient\* -DestinationPath BitTorrentClient-portable.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: BitTorrentClient-windows
           path: |
