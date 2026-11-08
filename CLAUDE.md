@@ -33,6 +33,8 @@ Current version is in `version.py`; release notes are the sections at the bottom
 - Dialogs (`_Dialog._see_through`): -transparentcolor = P['bg'] plus a borderless topmost backdrop Toplevel under the
   dialog drawing `_art_at(canvas, app.root)` (only the art shows through, not the main window's text). `_follow` acts
   only on a real geometry change - lifting windows from <Configure> loops forever.
+  `_backdrop_watch` removes a backdrop whose dialog is gone/hidden. SettingsDialog is NOT modal (own `show`):
+  `app._dropdown`; a root <ButtonPress> outside it (not on the gear), F11, or root resize (`_art_moved`) closes it.
 - Tick boxes: `ui.check_images()` (PNG made with stdlib zlib, real alpha) -> `Round.indicator` element in the TCheckbutton layout;
   the Files dialog and the context menu use the `*_tight` images.
 

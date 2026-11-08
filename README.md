@@ -433,3 +433,7 @@ downloaded yet waits for it instead of failing.
 ### 1.9.34
 - Settings: no border line around the drop-down, and the update options (automatic updates, Check now) moved from General to About.
 - **The aurora shows through Settings and the other option windows** (Add torrent, magnet link, messages ...): their background is see-through onto the artwork, lined up with the main window's; text, tick boxes and input fields stay solid.
+
+### 1.9.35
+- **Settings behaves like a drop-down menu:** the rest of the window keeps working while it is open, and clicking anywhere else (the list, the full-screen button, the toolbar ...), pressing F11 or clicking the gear again closes it - the click or key still does its job. Resizing the window closes it too.
+- A box of artwork could be left stuck on the screen after an option window closed; the see-through backgrounds now always clean themselves up.

@@ -2457,6 +2457,14 @@ class App:
 
     # -- settings ---------------------------------------------------------
     def settings_dialog(self):
+        d = getattr(self, "_dropdown", None)
+        if d is not None:                        # the gear again: close the drop-down
+            try:
+                d.destroy()
+            except tk.TclError:
+                pass
+            self._dropdown = None
+            return
         res = SettingsDialog(self).show()
         if res:
             self.apply_settings(**res)
@@ -2809,7 +2817,18 @@ class App:
             self.root.attributes("-fullscreen", on)
 
     def _art_moved(self):
-        """The window changed size: the picture is centred on it, so every part redraws its slice."""
+        """The window changed size: the picture is centred on it, so every part redraws its slice. An open
+        Settings drop-down closes (it hangs from the gear), other dialogs' see-through backdrops repaint."""
+        d = getattr(self, "_dropdown", None)
+        if d is not None:
+            try:
+                d.destroy()
+            except tk.TclError:
+                pass
+            self._dropdown = None
+        for w in self.root.winfo_children():
+            if hasattr(w, "_paint_backdrop"):
+                w._paint_backdrop()
         for fn in (self._draw_toolbar, self._draw_status, self._draw_sidebar, self.tree.redraw,
                    getattr(self, "_redraw_details", None), getattr(self.chrome, "draw", None)):
             if fn is not None:

@@ -76,7 +76,7 @@ class _Dialog(tk.Toplevel):
     def _place(self):
         center_over(self, self.app.root)
 
-    def _see_through(self):
+    def _see_through(self, topmost=True):
         """The dialog's background colour is made see-through, and the main window's aurora is drawn right behind
         it in a borderless backdrop window - so the artwork shows around the options, but not the main window's
         own text. Text, tick boxes and input fields stay solid."""
@@ -85,13 +85,16 @@ class _Dialog(tk.Toplevel):
         try:
             bd = self._bd = tk.Toplevel(self.app.root)
             bd.overrideredirect(True)
-            bd.attributes("-topmost", True)
+            if topmost:
+                bd.attributes("-topmost", True)
             c = bd.canvas = tk.Canvas(bd, bd=0, highlightthickness=0, bg=self.app.P["bg"])
             c.pack(fill="both", expand=True)
             c.bind("<MouseWheel>", lambda e: getattr(self, "_wheel", lambda e: None)(e))   # wheel over the gaps
             self.attributes("-transparentcolor", self.app.P["bg"])
             self.bind("<Configure>", lambda e: self._follow() if e.widget is self else None, add="+")
             self.bind("<Destroy>", lambda e: bd.destroy() if e.widget is self and bd.winfo_exists() else None, add="+")
+            bd._owner = self
+            bd.after(500, lambda: _backdrop_watch(bd))
         except tk.TclError:
             self._bd = None
 
@@ -156,6 +159,24 @@ class _Dialog(tk.Toplevel):
         except tk.TclError:
             pass
         return self.result
+
+
+def _backdrop_watch(bd):
+    """A dialog's see-through backdrop removes itself once the dialog is gone or hidden - it must never stay on
+    screen as a stray box of artwork."""
+    try:
+        if not bd.winfo_exists():
+            return
+        d = getattr(bd, "_owner", None)
+        if d is None or not d.winfo_exists() or not d.winfo_viewable():
+            bd.destroy()
+            return
+        bd.after(500, lambda: _backdrop_watch(bd))
+    except tk.TclError:
+        try:
+            bd.destroy()
+        except tk.TclError:
+            pass
 
 
 class MessageDialog(_Dialog):
@@ -897,6 +918,49 @@ class SettingsDialog(_Dialog):
         if self._anchor() is None:
             super()._place()
         self._fit()
+
+    def show(self):
+        """Not modal: the rest of the window stays usable, and using it closes the drop-down (like a menu)."""
+        app = self.app
+        self._place()
+        self._see_through(topmost=False)
+        try:
+            self.update_idletasks()
+            self.deiconify()
+            self.lift()
+            self.update()
+            self._follow(stack=True)
+            self.focus_force()
+        except tk.TclError:
+            pass
+        app._dropdown = self
+        if not getattr(app.root, "_dropdown_bound", False):
+            app.root.bind("<ButtonPress>", lambda e: SettingsDialog._outside(app, e), add="+")
+            app.root._dropdown_bound = True
+        self.bind("<F11>", lambda e: (self.destroy(), app.toggle_fullscreen()))
+        self.wait_window(self)
+        if getattr(app, "_dropdown", None) is self:
+            app._dropdown = None
+        try:
+            app.root.focus_force()
+        except tk.TclError:
+            pass
+        return self.result
+
+    @staticmethod
+    def _outside(app, e):
+        """A click anywhere in the main window closes the drop-down (the click still does its own job). The gear
+        itself is left alone: its button toggles the drop-down."""
+        d = getattr(app, "_dropdown", None)
+        try:
+            if d is None or not d.winfo_exists():
+                return
+            bar = getattr(app, "_tb_bar", None)
+            if bar is not None and e.widget is app.toolbar and bar.item_at(e) is app.btn.get("settings"):
+                return
+            d.destroy()
+        except (tk.TclError, AttributeError):
+            pass
 
     def _browse(self):
         d = filedialog.askdirectory(parent=self, title="Default save folder", initialdir=self.folder.get() or None)
