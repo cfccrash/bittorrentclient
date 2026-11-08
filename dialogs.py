@@ -46,7 +46,7 @@ class _Dialog(tk.Toplevel):
         if not strip:                    # a drop-down panel: no title strip, just a thin border
             try:
                 self.overrideredirect(True)
-                self.configure(highlightthickness=1, highlightbackground=app.P["border"], highlightcolor=app.P["border"])
+                self.configure(highlightthickness=0)          # no border lines: it sits on the artwork
             except tk.TclError:
                 pass
         elif chrome.enabled(app.cfg):
@@ -76,8 +76,57 @@ class _Dialog(tk.Toplevel):
     def _place(self):
         center_over(self, self.app.root)
 
+    def _see_through(self):
+        """The dialog's background colour is made see-through, and the main window's aurora is drawn right behind
+        it in a borderless backdrop window - so the artwork shows around the options, but not the main window's
+        own text. Text, tick boxes and input fields stay solid."""
+        if os.name != "nt" or getattr(self, "_bd", None) is not None:
+            return
+        try:
+            bd = self._bd = tk.Toplevel(self.app.root)
+            bd.overrideredirect(True)
+            bd.attributes("-topmost", True)
+            c = bd.canvas = tk.Canvas(bd, bd=0, highlightthickness=0, bg=self.app.P["bg"])
+            c.pack(fill="both", expand=True)
+            c.bind("<MouseWheel>", lambda e: getattr(self, "_wheel", lambda e: None)(e))   # wheel over the gaps
+            self.attributes("-transparentcolor", self.app.P["bg"])
+            self.bind("<Configure>", lambda e: self._follow() if e.widget is self else None, add="+")
+            self.bind("<Destroy>", lambda e: bd.destroy() if e.widget is self and bd.winfo_exists() else None, add="+")
+        except tk.TclError:
+            self._bd = None
+
+    def _follow(self, stack=False):
+        """Keep the backdrop exactly under the dialog, showing the artwork's slice for that spot. Only acts when the
+        dialog really moved or changed size (raising windows from <Configure> would fire it again, for ever)."""
+        bd = getattr(self, "_bd", None)
+        try:
+            if bd is None or not bd.winfo_exists():
+                return
+            geo = "%dx%d+%d+%d" % (self.winfo_width(), self.winfo_height(), self.winfo_rootx(), self.winfo_rooty())
+            if geo != getattr(self, "_bd_geo", None):
+                self._bd_geo = geo
+                bd.geometry(geo)
+                bd.canvas.delete("all")
+                bd.canvas.configure(width=self.winfo_width(), height=self.winfo_height())
+                self.after_idle(self._paint_backdrop)
+            if stack:
+                bd.lift()
+                self.lift()
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _paint_backdrop(self):
+        bd = getattr(self, "_bd", None)
+        try:
+            if bd is not None and bd.winfo_exists():
+                bd.canvas.delete("all")
+                self.app._art_at(bd.canvas, self.app.root)
+        except (tk.TclError, AttributeError):
+            pass
+
     def show(self):
         self._place()
+        self._see_through()
         prev = None
         try:
             prev = self.app.root.grab_current()
@@ -91,6 +140,7 @@ class _Dialog(tk.Toplevel):
             self.lift()
             self.attributes("-topmost", True)       # stays above the main window for as long as the dialog is open
             self.update()
+            self._follow(stack=True)                # see-through backdrop under it, then the dialog on top
             self.focus_force()
             self.grab_set()
         except tk.TclError:
@@ -471,6 +521,7 @@ class SettingsDialog(_Dialog):
         self._cv.create_window(0, 0, window=content, anchor="nw")
         content.columnconfigure(0, weight=1)
         self.bind("<MouseWheel>", self._wheel, add="+")
+
         self.pages, self.nav_rows, self._chev = {}, {}, {}
         self.current_page = None
 
@@ -533,18 +584,6 @@ class SettingsDialog(_Dialog):
         ttk.Button(box3, text="Use Bit Torrent Client for magnet links", command=app.register_magnet).grid(row=0, column=0, sticky="w")
         ttk.Label(box3, text="Clicking a magnet link in your browser will then open it in Bit Torrent Client.",
                   style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
-
-        box4 = ttk.LabelFrame(g, text="Updates", padding=14)
-        box4.grid(row=3, column=0, sticky="ew", pady=(14, 0))
-        box4.columnconfigure(1, weight=1)
-        self.update_check = tk.BooleanVar(value=cfg.get("update_check", True))
-        ttk.Checkbutton(box4, text="Keep Bit Torrent Client up to date automatically",
-                        variable=self.update_check).grid(row=0, column=0, sticky="w")
-        ttk.Button(box4, text="Check now", command=self._check_update).grid(row=0, column=2, padx=(8, 0))
-        ttk.Label(box4, text="About once a day it looks for a new version and downloads it in the background, then asks "
-                             "before installing (or installs it when you next exit).",
-                  style="Muted.TLabel", wraplength=self.px(470), justify="left").grid(row=1, column=0, columnspan=3,
-                                                                                       sticky="w", pady=(8, 0))
 
         # -- Media (playing while downloading)
         md = tab("Media")
@@ -750,7 +789,20 @@ class SettingsDialog(_Dialog):
             ttk.Button(fw, text="Allow in Windows Firewall", command=app.fix_firewall).grid(row=0, column=1, padx=(12, 0))
 
         # -- About: version, credits, data folder (the same content as the About window)
-        about_content(tab("About"), app, self.px).grid(row=0, column=0, sticky="nsew")
+        ab = tab("About")
+        about_content(ab, app, self.px).grid(row=0, column=0, sticky="nsew")
+        # Updates live with the version they update
+        box4 = ttk.LabelFrame(ab, text="Updates", padding=14)
+        box4.grid(row=1, column=0, sticky="ew", pady=(18, 0))
+        box4.columnconfigure(1, weight=1)
+        self.update_check = tk.BooleanVar(value=cfg.get("update_check", True))
+        ttk.Checkbutton(box4, text="Keep Bit Torrent Client up to date automatically",
+                        variable=self.update_check).grid(row=0, column=0, sticky="w")
+        ttk.Button(box4, text="Check now", command=self._check_update).grid(row=0, column=2, padx=(8, 0))
+        ttk.Label(box4, text="About once a day it looks for a new version and downloads it in the background, then asks "
+                             "before installing (or installs it when you next exit).",
+                  style="Muted.TLabel", wraplength=self.px(470), justify="left").grid(row=1, column=0, columnspan=3,
+                                                                                       sticky="w", pady=(8, 0))
 
         # Save / Cancel under the section list
         btns = ttk.Frame(side)

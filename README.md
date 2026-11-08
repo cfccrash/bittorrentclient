@@ -429,3 +429,7 @@ downloaded yet waits for it instead of failing.
 - **No more boxes anywhere:** buttons (Save, Cancel, Browse ...), the Settings sections, the details tabs, torrent rows, lists in dialogs, drop-down lists, tick boxes and the right-click menu no longer show a blue or grey box. Like the left column, whatever you point at - or have chosen - turns bold white instead. (Only the window's close button keeps its red.)
 - Settings: no lines between the section list and its page, or around the groups of options.
 - F11 works again after closing Settings or any other dialog (the keyboard went back nowhere).
+
+### 1.9.34
+- Settings: no border line around the drop-down, and the update options (automatic updates, Check now) moved from General to About.
+- **The aurora shows through Settings and the other option windows** (Add torrent, magnet link, messages ...): their background is see-through onto the artwork, lined up with the main window's; text, tick boxes and input fields stay solid.

@@ -30,6 +30,9 @@ Current version is in `version.py`; release notes are the sections at the bottom
   `_DrawnText` handled by `_DrawnBar` (hover, click on release, region tooltips). No separator line frames.
 - Sidebar = one canvas `App.side_cv` (see-through): buttons (`_SideButton`, in `App.btn`), separators and filter rows are all drawn (`_layout_sidebar`,
   `_draw_sidebar`; `side_rows` values are `_SideText`). List + column art is centred on `App._main` via `_art_at`; art is stretched 1.5x.
+- Dialogs (`_Dialog._see_through`): -transparentcolor = P['bg'] plus a borderless topmost backdrop Toplevel under the
+  dialog drawing `_art_at(canvas, app.root)` (only the art shows through, not the main window's text). `_follow` acts
+  only on a real geometry change - lifting windows from <Configure> loops forever.
 - Tick boxes: `ui.check_images()` (PNG made with stdlib zlib, real alpha) -> `Round.indicator` element in the TCheckbutton layout;
   the Files dialog and the context menu use the `*_tight` images.
 
