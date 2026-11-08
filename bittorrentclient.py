@@ -85,6 +85,163 @@ def rate0(r):
     return fmt_rate(r) if r >= 1 else "0 B/s"
 
 
+class _DrawnButton:
+    """A button drawn on a canvas over the window's artwork: no box of its own at rest (a `raised` one keeps a light
+    face), a light fill when pointed at or pressed. Has the ToolButton bits the App uses (restyle, set_enabled)."""
+
+    def __init__(self, app, key, icon, text, command, tip, raised=False):
+        self.app, self.key, self.icon, self.text, self.command, self.tip = app, key, icon, text, command, tip
+        self.raised, self.enabled, self.P = raised, True, None
+        self.x0 = self.y0 = self.x1 = self.y1 = 0
+        self.on_change = None            # called when it needs redrawing (enabled state changed)
+
+    @property
+    def clickable(self):
+        return self.enabled
+
+    def restyle(self, P):
+        self.P = P                       # its canvas is redrawn by the App
+
+    def set_enabled(self, on):
+        if on != self.enabled:
+            self.enabled = on
+            if self.on_change:
+                self.on_change()
+
+    def need(self):
+        F = self.app.F
+        if not self.text:
+            return int(F.icon.measure(self.icon)) + 28
+        w = F.ui.measure(self.text) + 14
+        w += (12 + F.icon.measure(self.icon) + 6) if self.icon else 14
+        return int(w)
+
+    def draw(self, cv, hover=False, down=False, tags=()):
+        app, F = self.app, self.app.F
+        P = app.P
+        x0, y0, x1, y1 = self.x0, self.y0, self.x1, self.y1
+        fill = None
+        if not self.enabled:
+            fill = P["hover"] if self.raised else None
+        elif self.raised:
+            fill = P["sel"] if down else P["press"] if hover else P["hover"]
+        elif down or hover:
+            fill = P["press"] if down else P["hover"]
+        if fill:
+            cv.create_rectangle(x0, y0, x1, y1, width=0, fill=fill, tags=tags)
+        fg = P["fg"] if self.enabled else P["disabled"]
+        mid = (y0 + y1) // 2
+        if not self.text:
+            cv.create_text((x0 + x1) // 2, mid, text=self.icon, font=F.icon, fill=fg, tags=tags)
+            return
+        x = x0 + (12 if self.icon else 14)
+        if self.icon:
+            cv.create_text(x, mid, anchor="w", text=self.icon, font=F.icon, fill=fg, tags=tags)
+            x += int(F.icon.measure(self.icon)) + 6
+        cv.create_text(x, mid, anchor="w", text=self.text, font=F.ui, fill=fg, tags=tags)
+
+
+class _DrawnText:
+    """A piece of status-bar text drawn on the artwork. Label-like configure/cget (text, fg); optional click + tip."""
+
+    def __init__(self, redraw, fg_key, text="", command=None, tip=None):
+        self.opts, self.fg_key, self._redraw = {"text": text}, fg_key, redraw
+        self.command, self.tip = command, tip
+        self.x0 = self.y0 = self.x1 = self.y1 = 0
+
+    clickable = property(lambda self: self.command is not None)
+
+    def configure(self, **kw):
+        changed = any(self.opts.get(k) != v for k, v in kw.items())
+        self.opts.update(kw)
+        if changed:
+            self._redraw()
+    config = configure
+
+    def cget(self, k):
+        return self.opts.get(k)
+
+    def colour(self, P):
+        return self.opts.get("fg") or P[self.fg_key]
+
+
+class _DrawnBar:
+    """Pointer handling for things drawn on a canvas (toolbar buttons, status-bar links): hover and press fills, a
+    click on release over the same item, the hand cursor, and one tooltip placed under (or above) the item."""
+
+    def __init__(self, app, cv, items, redraw, above=False):
+        self.app, self.cv, self.items, self.redraw = app, cv, items, redraw
+        self.hover = self.down = None
+        self.tip = Tooltip(cv, self._tip_text, lambda: app.P, above=above, region=self._region)
+        cv.bind("<Motion>", self._motion, add="+")
+        cv.bind("<Leave>", lambda e: self._motion(None), add="+")
+        cv.bind("<ButtonPress-1>", self._press, add="+")
+        cv.bind("<ButtonRelease-1>", self._release, add="+")
+
+    def _tip_text(self):
+        t = getattr(self.hover, "tip", None)
+        return t() if callable(t) else (t or "")
+
+    def item_at(self, e):
+        if e is None:
+            return None
+        for it in self.items():
+            if it.clickable and it.x0 <= e.x < it.x1 and it.y0 <= e.y < it.y1:
+                return it
+        return None
+
+    def _region(self):
+        it = self.hover
+        if it is None:
+            return None
+        x, y = self.cv.winfo_rootx(), self.cv.winfo_rooty()
+        return x + it.x0, y + it.y0, x + it.x1, y + it.y1
+
+    def _motion(self, e):
+        it = self.item_at(e)
+        if it is not self.hover:
+            self.hover = it
+            self.cv.configure(cursor="hand2" if it else "")
+            if self.down is not None and it is not self.down:
+                self.down = None
+            self.tip._hide()
+            if it is not None:
+                self.tip._schedule()
+            self.redraw()
+
+    def _press(self, e):
+        self.tip._hide()
+        it = self.item_at(e)
+        if it is not None:
+            self.down = it
+            self.redraw()
+
+    def _release(self, e):
+        d, self.down = self.down, None
+        if d is None:
+            return
+        self.redraw()
+        if self.item_at(e) is d:
+            d.command()
+
+
+class _SideText:
+    """Text of a drawn sidebar row. Label-like configure/cget, so counts update the same way; a change redraws."""
+
+    def __init__(self, text, redraw=None):
+        self.opts, self._redraw = {"text": text}, redraw
+
+    def configure(self, **kw):
+        changed = any(self.opts.get(k) != v for k, v in kw.items())
+        self.opts.update(kw)
+        if changed and self._redraw is not None:
+            self._redraw()
+    config = configure
+
+    def cget(self, k):
+        return self.opts.get(k)
+
+
 class App:
     MIN_COL = 55   # narrowest a column may get
 
@@ -178,21 +335,21 @@ class App:
         root.bind("<FocusOut>", lambda e: ui.Tooltip.hide_all() if e.widget is root else None, add="+")
         self.chrome = chrome.attach(root, self.P, self.px, APP, main=True, font=self.F.bold, snap=True) \
             if chrome.enabled(self.cfg) else None       # snap: real Windows frame behind the Aurora strip (Snap Layouts etc.)
+        if self.chrome is not None:
+            self.chrome.art = lambda c: self._art_at(c, self.root)   # the title strip shows its slice of the artwork
 
         # The status bar and details panel are packed against the bottom *before* the table, so when the window is
         # short it is the table that shrinks - the info bar can never be pushed off the bottom of the window.
+        # No lines between the parts: one artwork runs behind the whole window, title bar to status bar.
         self._build_toolbar()
-        self._line()
         self._build_statusbar()
-        self._line(side="bottom")
         self._build_details()
-        self._line(side="bottom")
-        main = self._frame(self.root, "bg")
+        main = self._main = self._frame(self.root, "bg")
         main.pack(fill="both", expand=True)
         self._build_sidebar(main)
         self._fit_column()
-        self._frame(main, "border", width=1).pack(side="left", fill="y")
-        self._build_table(main)
+        self._build_table(main)          # no dividing line: the aurora runs from the column straight into the list
+        root.bind("<Configure>", lambda e: self._later("art", self._art_moved) if e.widget is root else None, add="+")
         self._build_menu()
         for seq, fn in (("<Control-o>", self.add_dialog), ("<Control-v>", self.paste_magnet),
                         ("<Control-f>", lambda: self.search_entry.focus_set()),
@@ -366,144 +523,301 @@ class App:
         self.btn[key] = b
         return b
 
+    def _later(self, name, fn):
+        """Run fn once after this round of updates, however often it is asked for (coalesced redraws)."""
+        pend = self.__dict__.setdefault("_pending_draws", set())
+        if name in pend:
+            return
+        pend.add(name)
+
+        def go():
+            pend.discard(name)
+            fn()
+        try:
+            self.root.after_idle(go)
+        except (tk.TclError, AttributeError):
+            pend.discard(name)
+
+    def _btn_h(self):
+        F = self.F
+        return max(int(F.ui.metrics("linespace")), int(F.icon.metrics("linespace")) if F.has_icons else 0) + 16
+
     def _build_toolbar(self):
-        bar = self._frame(self.root, "surface")
-        bar.pack(fill="x")
+        """The toolbar is a canvas over the window's one artwork: Exit / Restart / Settings over the column, the
+        torrent actions from where the list starts, and the search box (a real entry) on the right."""
+        cv = self.toolbar = tk.Canvas(self.root, bd=0, highlightthickness=0, height=self._btn_h() + 16)
+        self._themed.append((cv, {"bg": "bg"}))
+        cv.pack(fill="x")
         self.btn = {}
-        # Left part: exactly as wide as the sidebar below, ending in the same dividing line, so the app's own
-        # buttons sit over the sidebar and the torrent actions start where the list starts.
-        left = self._tb_left = self._frame(bar, "surface", width=self.px(176))   # width: _fit_column()
-        left.pack(side="left", fill="y")
-        left.grid_propagate(False)
-        left.grid_rowconfigure(0, weight=1)
-        left.grid_columnconfigure((0, 1, 2), weight=1, uniform="tb")             # three equal slots, icons centred
-        self._frame(bar, "border", width=1).pack(side="left", fill="y")     # continues the sidebar's column line
-        inner = self._frame(bar, "surface")
-        inner.pack(side="left", fill="x", expand=True, padx=(self.px(8), 12), pady=8)
+        self._tb_items = []
 
-        def add(key, icon, text, cmd, tip, parent=inner, raised=False):
-            b = self._tool(parent, key, icon, text, cmd, tip, raised=raised)
-            if parent is left:
-                b.grid(row=0, column=len(left.grid_slaves()))
-            else:
-                b.pack(side="left", padx=(0, 4))
+        def add(key, icon, text, cmd, tip, raised=False, left=False):
+            b = _DrawnButton(self, key, icon, text, cmd, tip, raised=raised)
+            b.left, b.on_change = left, lambda: self._later("toolbar", self._draw_toolbar)
+            self.btn[key] = b
+            self._tb_items.append(b)
 
-        def sep():
-            self._frame(inner, "border", width=1).pack(side="left", fill="y", padx=10, pady=6)
-
-        # over the sidebar: exit / restart (icon only), and Settings as a raised button
+        # over the column: exit / restart (icon only), and Settings as a raised button
         add("exit", ui.ICON_EXIT, "" if self.F.has_icons else "Exit", self.exit_app,
-            "Exit Bit Torrent Client completely (the window's close button only hides it to the tray)", parent=left)
+            "Exit Bit Torrent Client completely (the window's close button only hides it to the tray)", left=True)
         add("restart", ui.ICON_RESTART, "" if self.F.has_icons else "Restart", self.restart, "Restart Bit Torrent Client",
-            parent=left)
+            left=True)
         add("settings", ui.ICON_SETTINGS, "" if self.F.has_icons else "Settings", self.settings_dialog,
-            "Settings: speed limits, encryption, network, theme", parent=left, raised=True)
+            "Settings: speed limits, encryption, network, theme", raised=True, left=True)
         # over the list: actions on the selected torrents
         add("resume", ui.ICON_PLAY, "Resume", self.resume, "Resume the selected torrents")
         add("pause", ui.ICON_PAUSE, "Pause", self.pause, "Pause the selected torrents  (Space)")
         add("remove", ui.ICON_DELETE, "Remove", self.remove, "Remove the selected torrents  (Delete)")
-        sep()
         add("files", ui.ICON_FILES, "Files", self.files_dialog, "Choose which files of the selected torrent to download")
         add("folder", ui.ICON_FOLDER, "Open folder", self.open_folder, "Show the download folder")
 
-        # search box, top right: magnifier icon + entry
+        # search box, top right: magnifier icon + entry (a real widget, placed on the canvas)
         self.search = tk.StringVar(value="")
-        box = tk.Frame(inner, bd=0, highlightthickness=1)
+        box = tk.Frame(cv, bd=0, highlightthickness=1)
         self._themed.append((box, {"bg": "bg", "highlightbackground": "border", "highlightcolor": "accent"}))
         if self.F.has_icons:
             icon = tk.Label(box, text=ui.ICON_SEARCH, font=self.F.icon, bd=0)
         else:
-            icon = tk.Label(box, text="\u2315", font=self.F.big, bd=0)
+            icon = tk.Label(box, text="⌕", font=self.F.big, bd=0)
         self._themed.append((icon, {"bg": "bg", "fg": "muted"}))
         entry = tk.Entry(box, textvariable=self.search, bd=0, relief="flat", width=26, font=self.F.ui,
                          highlightthickness=0)
         self._themed.append((entry, {"bg": "bg", "fg": "fg", "insertbackground": "fg"}))
         icon.pack(side="left", padx=(10, 4))
         entry.pack(side="left", fill="y", padx=(0, 10), pady=6, ipady=3)
-        box.pack(side="right", ipady=1)
+        self._search_item = cv.create_window(0, 0, window=box, anchor="e")
         icon.bind("<Button-1>", lambda e: entry.focus_set())
         entry.bind("<Escape>", lambda e: self.search.set(""))
         entry.bind("<Return>", lambda e: self.search_online(self.search.get().strip()) if self.search.get().strip() else None)
         self.search_entry = entry
         self.search.trace_add("write", lambda *_: self.refresh_now())
         Tooltip(box, lambda: "Filter the list by name  (Ctrl+F).  Press Enter to search for it online.", lambda: self.P)
+        self._tb_bar = _DrawnBar(self, cv, lambda: self._tb_items, self._draw_toolbar)
+        cv.bind("<Configure>", lambda e: self._draw_toolbar(), add="+")
+
+    def _draw_toolbar(self):
+        cv, P = self.toolbar, self.P
+        try:
+            cv.delete("deco")
+            self._art_at(cv, self.root, tags="deco")
+            w, bh = cv.winfo_width(), self._btn_h()
+            top = (int(cv.cget("height")) - bh) // 2
+            side = getattr(self, "_side", None)
+            colw = side.winfo_width() if side is not None and side.winfo_width() > 1 else self.px(176)
+            left = [b for b in self._tb_items if b.left]
+            slot = colw / max(1, len(left))                   # three equal slots over the column, buttons centred
+            for i, b in enumerate(left):
+                bw = b.need()
+                b.x0 = int(slot * i + (slot - bw) / 2)
+                b.x1, b.y0, b.y1 = b.x0 + bw, top, top + bh
+            x = colw + self.px(8)
+            for b in (b for b in self._tb_items if not b.left):
+                if b.key == "files":                          # a short divider between the two groups
+                    cv.create_line(x + 6, top + 6, x + 6, top + bh - 6, fill=P["border"], tags="deco")
+                    x += 17
+                b.x0, b.y0, b.x1, b.y1 = x, top, x + b.need(), top + bh
+                x = b.x1 + 4
+            bar = self._tb_bar
+            for b in self._tb_items:
+                b.draw(cv, hover=bar.hover is b, down=bar.down is b, tags="deco")
+            cv.coords(self._search_item, w - 12, (top + top + bh) // 2)
+            cv.tag_lower("deco")
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            pass
 
     def _fit_column(self):
         """The sidebar (and the toolbar part above it) is as wide as its widest item plus a little margin."""
         try:
-            self.side_inner.update_idletasks()
-            w = max(self.px(140), int(self.side_inner.winfo_reqwidth()) + self.px(14))
+            w = max(self.px(140), self._side_need() + self.px(14))
             self._side.configure(width=w)
-            self._tb_left.configure(width=w)
+            self._later("toolbar", self._draw_toolbar)      # its left buttons sit over the column
         except (tk.TclError, TypeError, ValueError, AttributeError):
             pass
 
+    def _side_need(self):
+        """Width the column's contents ask for: the widest button, or the widest filter row (bold name + count)."""
+        need = max([b.need() + 2 * self.px(10) for b in self._side_btns] or [0])
+        for _row, name, _count in self.side_rows.values():
+            need = max(need, int(self.F.bold.measure(name.cget("text"))) + int(self.F.small.measure("000"))
+                       + 2 * (self.px(6) + self.px(14)))
+        return need
+
     def _build_sidebar(self, parent):
+        """The left column is one canvas with nothing opaque on it: the aurora runs under it and on into the list.
+        Buttons, separators and filter rows are all drawn; only a pointed-at or selected item gets a fill."""
         side = self._side = self._frame(parent, "bg", width=self.px(176))       # width: _fit_column()
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         # the column scrolls (mouse wheel) when the window is too short for all of it
-        cv = tk.Canvas(side, bd=0, highlightthickness=0, width=1, height=1, yscrollincrement=self.px(30))
+        cv = self.side_cv = tk.Canvas(side, bd=0, highlightthickness=0, width=1, height=1)
         self._themed.append((cv, {"bg": "bg"}))
         cv.pack(fill="both", expand=True)
-        inner = self._frame(cv, "bg")
-        win = cv.create_window(0, 0, window=inner, anchor="nw")
-
-        def fit(_e=None):
-            w, h = cv.winfo_width(), cv.winfo_height()
-            cv.itemconfigure(win, width=w)
-            need = inner.winfo_reqheight()
-            cv.configure(scrollregion=(0, 0, w, max(need, h)))
-            if need <= h:
-                cv.yview_moveto(0)
-        cv.bind("<Configure>", fit)
-        inner.bind("<Configure>", fit)
-
-        def wheel(e):
-            if inner.winfo_reqheight() > cv.winfo_height():
-                cv.yview_scroll(-1 if e.delta > 0 else 1, "units")
-        self._side_wheel = lambda w=inner: self._bind_wheel(w, wheel)
-        self.side_inner = inner
-        # Add torrent / Magnet link / Search / Create at the top of the column, above the filters
-        pad = self.px(10)
-        self._tool(inner, "add", ui.ICON_ADD, "Add torrent", self.add_dialog,
-                   "Add .torrent files  (Ctrl+O)", pady=6).pack(fill="x", padx=pad, pady=(self.px(12), self.px(4)))
-        self._tool(inner, "magnet", ui.ICON_LINK, "Magnet link", self.add_magnet_dialog,
-                   "Add a magnet link  (Ctrl+V)", pady=6).pack(fill="x", padx=pad, pady=(0, self.px(4)))
-        self._tool(inner, "search", ui.ICON_SEARCH, "Search online", self.search_online,
-                   "Search for torrents online  (Ctrl+Shift+F)", pady=6).pack(fill="x", padx=pad, pady=(0, self.px(4)))
-        self._tool(inner, "create", ui.ICON_CREATE, "Create torrent", self.create_torrent,
-                   "Make a .torrent from a file or folder you want to share", pady=6).pack(fill="x", padx=pad)
-        self._tool(inner, "rss", ui.ICON_RSS, "RSS feeds", self.rss_dialog,
-                   "Add torrents automatically from RSS / Atom feeds", pady=6).pack(fill="x", padx=pad, pady=(self.px(4), 0))
-        self._tool(inner, "library", ui.ICON_LIBRARY, "Library", self.library_dialog,
-                   "Everything you can watch, with continue-watching", pady=6).pack(fill="x", padx=pad, pady=(self.px(4), 0))
-        self._frame(inner, "border", height=1).pack(fill="x", padx=pad, pady=self.px(10))
+        self._side_btns, self._side_hits, self._side_hover, self._side_h = [], [], None, 0
+        self._side_down = None
+        for key, icon, text, cmd, tip in (
+                ("add", ui.ICON_ADD, "Add torrent", self.add_dialog, "Add .torrent files  (Ctrl+O)"),
+                ("magnet", ui.ICON_LINK, "Magnet link", self.add_magnet_dialog, "Add a magnet link  (Ctrl+V)"),
+                ("search", ui.ICON_SEARCH, "Search online", self.search_online, "Search for torrents online  (Ctrl+Shift+F)"),
+                ("create", ui.ICON_CREATE, "Create torrent", self.create_torrent,
+                 "Make a .torrent from a file or folder you want to share"),
+                ("rss", ui.ICON_RSS, "RSS feeds", self.rss_dialog, "Add torrents automatically from RSS / Atom feeds"),
+                ("library", ui.ICON_LIBRARY, "Library", self.library_dialog, "Everything you can watch, with continue-watching")):
+            b = _DrawnButton(self, key, icon if self.F.has_icons else "", text, cmd, tip)
+            self._side_btns.append(b)
+            self.btn[key] = b
         for key, text in panels.FILTERS:
-            self._side_row(inner, key, text)
-        self.cat_box = self._frame(inner, "bg")
-        self.cat_box.pack(fill="x")
+            self._side_row(key, text)
         self._cat_names = ()
         self.side = side
+        # one tooltip for the canvas: it shows the pointed-at button's text, under that button
+        self._side_tip = Tooltip(cv, lambda: self._side_hover.tip if isinstance(self._side_hover, _DrawnButton) else "",
+                                 lambda: self.P, region=self._side_tip_region)
+
+        def wheel(e):
+            if self._side_h > cv.winfo_height():
+                cv.yview_scroll(-1 if e.delta > 0 else 1, "units")
+                self._draw_sidebar()
+        cv.configure(yscrollincrement=self.px(30))
+        self._side_wheel = lambda w=cv: self._bind_wheel(w, wheel)
+        cv.bind("<Configure>", lambda e: self._layout_sidebar())
+        cv.bind("<Motion>", lambda e: self._side_motion(e))
+        cv.bind("<Leave>", lambda e: self._side_motion(None))
+        cv.bind("<ButtonPress-1>", lambda e: self._side_press(e))
+        cv.bind("<ButtonRelease-1>", lambda e: self._side_release(e))
         self._side_wheel()
+
+    def _side_tip_region(self):
+        """Screen rectangle of the pointed-at button (where its tooltip belongs), or None."""
+        b = self._side_hover
+        if not isinstance(b, _DrawnButton):
+            return None
+        cv = self.side_cv
+        x, y = cv.winfo_rootx(), cv.winfo_rooty() - int(cv.canvasy(0))
+        return x + self.px(10), y + b.y0, x + cv.winfo_width() - self.px(10), y + b.y1
+
+    def _layout_sidebar(self):
+        """Work out where the buttons, separators and filter rows go (drawn by _draw_sidebar)."""
+        cv, px = self.side_cv, self.px
+        try:
+            w = cv.winfo_width()
+            y = px(12)
+            bh = max(int(self.F.ui.metrics("linespace")), int(self.F.icon.metrics("linespace")) if self.F.has_icons else 0) \
+                + 2 * px(6)
+            for i, b in enumerate(self._side_btns):
+                b.y0, b.y1 = y, y + bh
+                y += bh + (px(4) if i < len(self._side_btns) - 1 else 0)
+            self._side_lines = []
+            y += px(10)
+            self._side_lines.append(y)
+            y += px(10)
+            self._side_hits = []
+            rh = int(self.F.bold.metrics("linespace")) + 2 * px(3)
+            last_cat = False
+            for key in self.side_rows:
+                if key.startswith("cat:") and not last_cat:      # categories under their own separator
+                    y += px(8) - 1
+                    self._side_lines.append(y)
+                    y += px(8)
+                    last_cat = True
+                self._side_hits.append((y, y + rh, key))
+                y += rh + 2
+            self._side_h = y + px(8)
+            h = cv.winfo_height()
+            cv.configure(scrollregion=(0, 0, w, max(self._side_h, h)))
+            if self._side_h <= h:
+                cv.yview_moveto(0)
+            self._draw_sidebar()
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            pass
+
+    def _draw_sidebar(self, hover=None):
+        """Art, buttons, separators and filter rows. Only the selected filter and the pointed-at item get a fill."""
+        cv, P, px = self.side_cv, self.P, self.px
+        try:
+            cv.delete("all")
+            self._art_at(cv, self.root)
+            w = cv.winfo_width()
+            pad = px(10)
+            for b in self._side_btns:
+                b.x0, b.x1 = pad, w - pad
+                b.draw(cv, hover=self._side_hover is b, down=self._side_down is b)
+            for y in getattr(self, "_side_lines", ()):
+                cv.create_line(pad, y, w - pad, y, fill=P["border"])
+            for y0, y1, key in self._side_hits:
+                _row, name, count = self.side_rows[key]
+                on = key == self.filter_key
+                if on or key == self._side_hover:
+                    cv.create_rectangle(px(6), y0, w - px(6), y1, width=0, fill=P["sel"] if on else P["hover"])
+                mid = (y0 + y1) // 2
+                cv.create_text(px(6) + px(14), mid, anchor="w", text=name.cget("text"),
+                               font=self.F.bold if on else self.F.ui, fill=P["sel_fg"] if on else P["fg"])
+                cv.create_text(w - px(6) - px(14), mid, anchor="e", text=count.cget("text"),
+                               font=self.F.small, fill=P["muted"])
+        except (tk.TclError, TypeError, ValueError, AttributeError, KeyError):
+            pass
+
+    def _side_item_at(self, e):
+        """The button (a _DrawnButton) or filter key under the pointer, or None."""
+        if e is None:
+            return None
+        try:
+            y = self.side_cv.canvasy(e.y)
+        except (tk.TclError, TypeError):
+            return None
+        for b in self._side_btns:
+            if b.y0 <= y < b.y1:
+                return b
+        for y0, y1, key in self._side_hits:
+            if y0 <= y < y1:
+                return key
+        return None
+
+    def _side_motion(self, e):
+        item = self._side_item_at(e)
+        if item != self._side_hover:
+            self._side_hover = item
+            self.side_cv.configure(cursor="hand2" if item else "")
+            if self._side_down is not None and item is not self._side_down:
+                self._side_down = None
+            self._side_tip._hide()
+            if isinstance(item, _DrawnButton):
+                self._side_tip._schedule()
+            self._draw_sidebar()
+
+    def _side_press(self, e):
+        self._side_tip._hide()
+        item = self._side_item_at(e)
+        if isinstance(item, _DrawnButton):
+            self._side_down = item              # runs on release over the same button, like a real button
+            self._draw_sidebar()
+        elif item:
+            self.set_filter(item)
+
+    def _side_release(self, e):
+        down, self._side_down = self._side_down, None
+        if down is None:
+            return
+        self._draw_sidebar()
+        if self._side_item_at(e) is down:
+            down.command()
 
     def _bind_wheel(self, w, fn):
         w.bind("<MouseWheel>", fn)
         for c in w.winfo_children():
             self._bind_wheel(c, fn)
 
-    def _side_row(self, parent, key, text):
-        row = tk.Frame(parent, bd=0, highlightthickness=0, cursor="hand2")
-        name = tk.Label(row, text=text, font=self.F.ui, anchor="w", bd=0)
-        count = tk.Label(row, text="0", font=self.F.small, anchor="e", bd=0)
-        name.pack(side="left", padx=(self.px(14), 0), pady=self.px(3))
-        count.pack(side="right", padx=(0, self.px(14)))
-        row.pack(fill="x", padx=self.px(6), pady=1)
-        for w in (row, name, count):
-            w.bind("<Button-1>", lambda e, k=key: self.set_filter(k))
-            w.bind("<Enter>", lambda e, k=key: self._paint_sidebar(hover=k))
-            w.bind("<Leave>", lambda e: self._paint_sidebar())
-        self.side_rows[key] = (row, name, count)
+    def _side_row(self, key, text):
+        self.side_rows[key] = (_SideText(key), _SideText(text, self._side_dirty), _SideText("0", self._side_dirty))
+
+    def _side_dirty(self):
+        """A count changed: redraw the column once, after this round of updates."""
+        if not getattr(self, "_side_queued", False):
+            self._side_queued = True
+
+            def go():
+                self._side_queued = False
+                self._draw_sidebar()
+            self.root.after_idle(go)
 
     def _sync_categories(self):
         """One sidebar row per category, under the status filters (rebuilt when the category list changes)."""
@@ -512,27 +826,16 @@ class App:
             return
         self._cat_names = names
         for key in [k for k in self.side_rows if k.startswith("cat:")]:
-            self.side_rows.pop(key)[0].destroy()
-        for w in list(self.cat_box.winfo_children()):
-            w.destroy()
-        if names:
-            self._frame(self.cat_box, "border", height=1).pack(fill="x", padx=self.px(10), pady=self.px(8))
-            for n in names:
-                self._side_row(self.cat_box, "cat:" + n, n)
+            self.side_rows.pop(key)
+        for n in names:
+            self._side_row("cat:" + n, n)
         if self.filter_key.startswith("cat:") and self.filter_key not in self.side_rows:
             self.filter_key = "all"
-        self._paint_sidebar()
-        if hasattr(self, "_side_wheel"):
-            self._side_wheel()
+        self._fit_column()
+        self._layout_sidebar()
 
     def _paint_sidebar(self, hover=None):
-        P = self.P
-        for key, (row, name, count) in self.side_rows.items():
-            on = key == self.filter_key
-            bg = P["sel"] if on else P["hover"] if key == hover else P["bg"]
-            row.configure(bg=bg)
-            name.configure(bg=bg, fg=P["sel_fg"] if on else P["fg"], font=self.F.bold if on else self.F.ui)
-            count.configure(bg=bg, fg=P["muted"])
+        self._draw_sidebar()
 
     def set_filter(self, key):
         self.filter_key = key
@@ -573,8 +876,7 @@ class App:
         c, P = self.empty, self.P
         c.delete("all")
         w, h = c.winfo_width(), c.winfo_height()
-        if self._art() is not None:
-            c.create_image(w // 2, h // 2, image=self._art())
+        self._art_at(c, self.root)
         if self._empty_shown:
             c.create_text(w // 2, h // 2 + self.px(60), text="No torrents yet", font=self.F.title, fill=P["fg"])
             c.create_text(w // 2, h // 2 + self.px(112), justify="center", font=self.F.big, fill=P["muted"],
@@ -592,6 +894,7 @@ class App:
                 img = tk.PhotoImage(data=assets_ui.BACKDROP_WIDE if dark else assets_ui.BACKDROP_WIDE_LIGHT)   # 2400 x 1100
                 if self.scale < 1.5:
                     img = img.subsample(2, 2)
+                img = img.zoom(3, 2).subsample(2, 1)   # 1.5x wide, 2x tall: one picture behind the whole window
             except Exception:
                 pass
             setattr(self, key, img)
@@ -734,14 +1037,21 @@ class App:
                       font=self.F.ui, fill=self.P["muted"])
 
     def _draw_art(self, c):
-        """Draw the artwork on canvas `c` centred on the details pane, so every canvas shows its own slice."""
+        """Draw the window's artwork on canvas `c`: every canvas shows its own slice of the one picture."""
+        self._art_at(c, self.root)
+
+    def _art_at(self, c, ref, tags=()):
+        """Draw the artwork on canvas `c` centred on widget `ref` (scrolled canvases included)."""
         art = self._art()
         if art is None:
             return
-        det = self.det
-        x = det.winfo_rootx() + det.winfo_width() // 2 - c.winfo_rootx()
-        y = det.winfo_rooty() + det.winfo_height() // 2 - c.winfo_rooty()
-        c.create_image(x, y, image=art)
+        try:
+            ox, oy = int(c.canvasx(0)), int(c.canvasy(0))
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            ox = oy = 0
+        x = ref.winfo_rootx() + ref.winfo_width() // 2 - c.winfo_rootx() + ox
+        y = ref.winfo_rooty() + ref.winfo_height() // 2 - c.winfo_rooty() + oy
+        c.create_image(x, y, image=art, tags=tags)
 
     def _draw_tabstrip(self):
         c, P, px = self.tabstrip, self.P, self.px
@@ -816,7 +1126,8 @@ class App:
         """Give the details pane only what is left once the whole sidebar fits (never grows for the Player tab)."""
         try:
             self.root.update_idletasks()
-            body_need = self.side_inner.winfo_reqheight() + self.px(6)
+            self._layout_sidebar()
+            body_need = self._side_h + self.px(6)
             # what the list area has now + what the pane has now = the room to share; the sidebar gets first call
             strip = self.tabstrip.winfo_height()            # the drawn tab row sits above the Notebook
             room = self.tree.master.winfo_height() + self.tabs.winfo_height() + strip
@@ -1360,29 +1671,49 @@ class App:
             self._sync_rows(tv, [])
 
     def _build_statusbar(self):
-        bar = self._frame(self.root, "bg")
-        bar.pack(fill="x", side="bottom")
-        inner = self._frame(bar, "bg")
-        inner.pack(fill="x", padx=18, pady=8)
-        self.s_speed = self._label(inner, "bg", "fg", self.F.ui, text="")
-        self.s_speed.pack(side="left")
-        self.s_count = self._label(inner, "bg", "muted", self.F.ui, text="")
-        self.s_count.pack(side="left", padx=(26, 0))
-        self.s_net = self._label(inner, "bg", "muted", self.F.ui, text="")
-        self.s_net.pack(side="right")
-        self.s_alt = self._label(inner, "bg", "muted", self.F.ui, text="Alt speed: off", cursor="hand2")
-        self.s_alt.pack(side="right", padx=(22, 22))
-        self.s_alt.bind("<Button-1>", lambda e: self.toggle_alt())
-        Tooltip(self.s_alt, lambda: "Click to switch the alternative speed limits (Settings > Speed) on or off", lambda: self.P,
-                above=True)
-        self.s_pf = self._label(inner, "bg", "fg", self.F.ui, text="")
-        self.s_pf.pack(side="right", padx=(0, 22))
-        self.s_dot = self._label(inner, "bg", "muted", self.F.ui, text="\u25CF")
-        self.s_dot.pack(side="right", padx=(0, 6))
-        for w in (self.s_pf, self.s_dot):
-            Tooltip(w, lambda: self._pf_full, lambda: self.P, above=True)
-            w.configure(cursor="hand2")
-            w.bind("<Button-1>", lambda e: self.diagnostics_dialog())
+        """The status bar is drawn on the window's artwork too. Alt speed and the port-forwarding text are links."""
+        cv = self.statusbar = tk.Canvas(self.root, bd=0, highlightthickness=0,
+                                        height=int(self.F.ui.metrics("linespace")) + 16)
+        self._themed.append((cv, {"bg": "bg"}))
+        cv.pack(fill="x", side="bottom")
+        redraw = lambda: self._later("status", self._draw_status)
+        self.s_speed = _DrawnText(redraw, "fg")
+        self.s_count = _DrawnText(redraw, "muted")
+        self.s_net = _DrawnText(redraw, "muted")
+        self.s_alt = _DrawnText(redraw, "muted", "Alt speed: off", command=self.toggle_alt,
+                                tip="Click to switch the alternative speed limits (Settings > Speed) on or off")
+        self.s_pf = _DrawnText(redraw, "fg", command=self.diagnostics_dialog, tip=lambda: self._pf_full)
+        self.s_dot = _DrawnText(redraw, "muted", "●", command=self.diagnostics_dialog, tip=lambda: self._pf_full)
+        self._st_items = (self.s_speed, self.s_count, self.s_net, self.s_alt, self.s_pf, self.s_dot)
+        self._st_bar = _DrawnBar(self, cv, lambda: self._st_items, self._draw_status, above=True)
+        cv.bind("<Configure>", lambda e: self._draw_status(), add="+")
+
+    def _draw_status(self):
+        cv, P, F = self.statusbar, self.P, self.F
+        try:
+            cv.delete("all")
+            self._art_at(cv, self.root)
+            w, h = cv.winfo_width(), int(cv.cget("height"))
+            mid = h // 2
+
+            def put(t, x, anchor):
+                text = t.cget("text") or ""
+                tw = int(F.ui.measure(text))
+                x0 = x if anchor == "w" else x - tw
+                t.x0, t.y0, t.x1, t.y1 = x0, 0, x0 + tw, h
+                hot = self._st_bar.hover is t and t is not self.s_dot
+                cv.create_text(x, mid, anchor=anchor, text=text, font=F.ui, fill=P["fg"] if hot else t.colour(P))
+                return tw
+            x = 18
+            x += put(self.s_speed, x, "w") + 26
+            put(self.s_count, x, "w")
+            x = w - 18
+            x -= put(self.s_net, x, "e") + 22
+            x -= put(self.s_alt, x, "e") + 22
+            x -= put(self.s_pf, x, "e") + 6
+            put(self.s_dot, x, "e")
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            pass
 
     def _build_menu(self):
         self.menu = tk.Menu(self.root, tearoff=0, bd=0, relief="flat")
@@ -1402,8 +1733,12 @@ class App:
         self.menu.add_command(label="Stop sharing on the network", command=self.stop_sharing)
         self.menu.add_command(label="Speed limit\u2026", command=self.limit_dialog)
         self.seq_var = tk.BooleanVar(value=False)
-        self.menu.add_checkbutton(label="Download in order (for streaming)", variable=self.seq_var,
-                                  command=self.toggle_sequential)
+        im = ui.check_images()           # the round tick box here too (green when on)
+        extra = dict(image=im["off_tight"], selectimage=im["on_tight"], compound="left", indicatoron=False) \
+            if im.get("off_tight") is not None else {}
+        self.menu.add_checkbutton(label="  Download in order (for streaming)" if extra else
+                                  "Download in order (for streaming)", variable=self.seq_var,
+                                  command=self.toggle_sequential, **extra)
         self.menu.add_separator()
         self.menu.add_command(label="Remove", command=self.remove)
 
@@ -1489,6 +1824,9 @@ class App:
         if getattr(self, "tabstrip", None) is not None:
             self._redraw_details()
         self._paint_sidebar()
+        self._draw_toolbar()
+        self._update_alt_label()
+        self._draw_status()
         self.tree.redraw()
 
     # -- persistence ------------------------------------------------------
@@ -2432,11 +2770,21 @@ class App:
         self._empty_shown = show
         self._layout_art()
 
+    def _art_moved(self):
+        """The window changed size: the picture is centred on it, so every part redraws its slice."""
+        for fn in (self._draw_toolbar, self._draw_status, self._draw_sidebar, self.tree.redraw,
+                   getattr(self, "_redraw_details", None), getattr(self.chrome, "draw", None)):
+            if fn is not None:
+                try:
+                    fn()
+                except (tk.TclError, AttributeError):
+                    pass
+        if self._empty_shown:
+            self._draw_empty()
+
     def _draw_list_art(self, c):
-        """The list draws the aurora full size behind its rows, so adding torrents never shrinks it."""
-        art = self._art()
-        if art is not None:
-            c.create_image(c.winfo_width() // 2, c.winfo_height() // 2, image=art)
+        """The list draws its slice of the window's artwork behind its rows, so adding torrents never shrinks it."""
+        self._art_at(c, self.root)
 
     def _layout_art(self):
         """With no rows shown, the empty-state canvas (same artwork, plus the hint) covers the list."""

@@ -24,6 +24,14 @@ Current version is in `version.py`; release notes are the sections at the bottom
 - Artwork: `assets_ui.BACKDROP_WIDE` (dark, paletted PNG) and `BACKDROP_WIDE_LIGHT` (made from it by `tools/make_light_backdrop.py`), picked by `App._art()`.
 - Main list + details tables are `arttable.ArtTable` (Canvas drawn over the aurora, Treeview-like API). Its `delete/move/index/bbox/insert` are the
   Treeview row methods, shadowing Canvas ones: inside it use `tk.Canvas.delete(self, ...)` for canvas items. Details pane art = `App._draw_art(c)`.
+- One artwork behind the whole window: `App._art()` (stretched 1.5x wide, 2x tall) drawn by every canvas with
+  `_art_at(c, self.root)` - title strip (`chrome.art`), toolbar (`App.toolbar`), sidebar, list, details, status bar
+  (`App.statusbar`). Root <Configure> -> `_art_moved` redraws all. Toolbar/status items are `_DrawnButton` /
+  `_DrawnText` handled by `_DrawnBar` (hover, click on release, region tooltips). No separator line frames.
+- Sidebar = one canvas `App.side_cv` (see-through): buttons (`_SideButton`, in `App.btn`), separators and filter rows are all drawn (`_layout_sidebar`,
+  `_draw_sidebar`; `side_rows` values are `_SideText`). List + column art is centred on `App._main` via `_art_at`; art is stretched 1.5x.
+- Tick boxes: `ui.check_images()` (PNG made with stdlib zlib, real alpha) -> `Round.indicator` element in the TCheckbutton layout;
+  the Files dialog and the context menu use the `*_tight` images.
 
 ## Things learned the hard way (Windows behaviour I could not test from Linux)
 - Main window = `chrome.NativeFrame` (snap=True): a real WS_OVERLAPPEDWINDOW with a subclassed wndproc - WM_NCCALCSIZE

@@ -141,6 +141,93 @@ class Fonts:
 BAR_KINDS = {"Down": "bar_down", "Seed": "bar_seed", "Check": "bar_check", "Idle": "bar_idle", "Err": "bar_err"}
 
 
+def _png(w, h, rgba_rows):
+    """Encode RGBA rows (lists of (r, g, b, a)) as a PNG - stdlib only, so the round tick boxes keep real alpha."""
+    import struct, zlib
+    raw = b"".join(b"\0" + bytes(v for px_ in row for v in px_) for row in rgba_rows)
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def _rgb(c):
+    c = c.lstrip("#")
+    return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def circle_png(size, ring=None, fill=None, dot=None, gap=0, stroke=None):
+    """A round tick box: `ring` outline colour, `fill` a lit disc (lighter at the centre), `dot` a smaller disc
+    (part-ticked). Anti-aliased by 4x4 supersampling; `gap` adds transparent pixels on the right (space before the text)."""
+    import base64
+    w, n = size + gap, 4
+    r_out = size / 2.0 - 0.5
+    sw = stroke or max(1.5, size / 11.0)
+    cx = cy = size / 2.0
+    ring_c, fill_c, dot_c = (_rgb(c) if c else None for c in (ring, fill, dot))
+    rows = []
+    for y in range(size):
+        row = []
+        for x in range(w):
+            cov_ring = cov_fill = cov_dot = 0
+            for sy in range(n):
+                for sx in range(n):
+                    dx = x + (sx + 0.5) / n - cx
+                    dy = y + (sy + 0.5) / n - cy
+                    d = (dx * dx + dy * dy) ** 0.5
+                    if d <= r_out:
+                        if d >= r_out - sw:
+                            cov_ring += 1
+                        if fill_c and d < r_out - sw + 0.5:
+                            cov_fill += 1
+                        if dot_c and d <= r_out * 0.42:
+                            cov_dot += 1
+            tot = float(n * n)
+            px_ = (0, 0, 0, 0)
+            if fill_c and (cov_fill or cov_ring):
+                d = (((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2) ** 0.5) / max(r_out, 1)
+                glow = max(0.0, 1.0 - d) * 0.45          # lit: lighter towards the middle
+                col = tuple(int(c + (255 - c) * glow) for c in fill_c)
+                a = (cov_fill + cov_ring) / tot
+                if cov_ring and ring_c:
+                    t = cov_ring / max(cov_fill + cov_ring, 1)
+                    col = tuple(int(a_ * (1 - t) + b_ * t) for a_, b_ in zip(col, ring_c))
+                px_ = col + (int(255 * min(1.0, a)),)
+            elif cov_dot:
+                px_ = dot_c + (int(255 * cov_dot / tot),)
+            elif cov_ring and ring_c:
+                px_ = ring_c + (int(255 * cov_ring / tot),)
+            row.append(px_)
+        rows.append(row)
+    return base64.b64encode(_png(w, size, rows))
+
+
+_CHECKS = {}     # name -> PhotoImage: round tick boxes, repainted in place when the theme changes
+
+
+def check_images(root=None, P=None, size=None, gap=0):
+    """The round tick-box images ('off', 'on', 'part', 'hover', 'dis', 'dis_on'); green when ticked.
+    Called with a palette to (re)paint them; without, returns the current set."""
+    if P is None:
+        return _CHECKS
+    on = P.get("bar_seed", P["accent"])
+    spec = dict(off=dict(ring=P["muted"]), hover=dict(ring=P["fg"]), on=dict(ring=on, fill=on),
+                part=dict(ring=on, dot=on), dis=dict(ring=P["disabled"]), dis_on=dict(ring=P["disabled"], fill=P["disabled"]))
+    for name, kw in spec.items():
+        for g, key in ((gap, name), (0, name + "_tight")):
+            data = circle_png(size, gap=g, **kw)
+            img = _CHECKS.get(key)
+            try:
+                if img is None or str(img) not in root.image_names():
+                    _CHECKS[key] = tk.PhotoImage(master=root, data=data, format="png")
+                else:
+                    img.configure(data=data, format="png")
+            except (tk.TclError, TypeError, AttributeError):
+                _CHECKS[key] = tk.PhotoImage(master=root, data=data)
+    return _CHECKS
+
+
 def style_ttk(root, P, F, px):
     """(Re)configure every ttk style for palette P. `px` scales pixel sizes for the display's DPI."""
     st = ttk.Style(root)
@@ -177,6 +264,17 @@ def style_ttk(root, P, F, px):
     root.option_add("*TCombobox*Listbox.selectForeground", P["sel_fg"])
 
     st.configure("TCheckbutton", background=P["bg"], foreground=P["fg"])
+    # round tick boxes that light up green when ticked (instead of clam's small square)
+    im = check_images(root, P, size=px(18), gap=px(8))
+    try:
+        st.element_create("Round.indicator", "image", im["off"],
+                          ("disabled", "selected", im["dis_on"]), ("disabled", im["dis"]),
+                          ("selected", im["on"]), ("alternate", im["part"]), ("active", im["hover"]), sticky="")
+    except tk.TclError:
+        pass                                  # already made: the images it uses were repainted in place above
+    st.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nswe", "children": [
+        ("Round.indicator", {"side": "left", "sticky": ""}),
+        ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [("Checkbutton.label", {"sticky": "nswe"})]})]})])
     st.map("TCheckbutton", background=[("active", P["bg"])], foreground=[("disabled", P["disabled"])])
     st.configure("TLabelframe", background=P["bg"], bordercolor=P["border"])
     st.configure("TLabelframe.Label", background=P["bg"], foreground=P["muted"], font=F.bold)
@@ -297,8 +395,9 @@ class ToolButton(tk.Frame):
 class Tooltip:
     """Small hover tooltip. `text` may be a string or a callable returning one."""
 
-    def __init__(self, widget, text, get_palette, above=False, delay=450):
+    def __init__(self, widget, text, get_palette, above=False, delay=450, region=None):
         self.widget, self.text, self.get_palette, self.above, self.delay = widget, text, get_palette, above, delay
+        self.region = region     # optional: () -> screen (x0, y0, x1, y1) of the part of the widget the tip is for
         self.tip, self._after, self._watch = None, None, None
         Tooltip.live.append(self)
         widget.bind("<Enter>", self._schedule, add="+")
@@ -347,7 +446,10 @@ class Tooltip:
                  padx=10, pady=6, bd=0).pack()
         tw.update_idletasks()
         x = self.widget.winfo_rootx() + 8
-        if self.above:
+        r = self.region() if self.region else None
+        if r:
+            x, y = r[0] + 8, (r[1] - tw.winfo_reqheight() - 6) if self.above else r[3] + 6
+        elif self.above:
             y = self.widget.winfo_rooty() - tw.winfo_reqheight() - 6
         else:
             y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
@@ -370,6 +472,9 @@ class Tooltip:
     def _inside(self):
         try:
             px_, py_ = self.widget.winfo_pointerxy()
+            if self.region:
+                r = self.region()
+                return bool(r) and r[0] <= px_ < r[2] and r[1] <= py_ < r[3]
             x, y = self.widget.winfo_rootx(), self.widget.winfo_rooty()
             return x <= px_ < x + self.widget.winfo_width() and y <= py_ < y + self.widget.winfo_height()
         except tk.TclError:

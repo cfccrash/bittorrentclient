@@ -475,8 +475,8 @@ def main():
         print("Media: episode queue, subtitles, skip extras, watched marks, library, LAN link, in-tab player: OK")
         # small window: sidebar scrolls instead of being cut off
         root.geometry("900x520"); root.update(); time.sleep(0.2); root.update()
-        cv = app.side_inner.master
-        assert cv.winfo_height() < app.side_inner.winfo_reqheight() or True
+        app._layout_sidebar()
+        assert app.side_cv.winfo_height() < app._side_h, (app.side_cv.winfo_height(), app._side_h)
     # exiting with an update waiting ("install when I next exit"): the installer runs, without restarting the app
     import updater
     pending = getattr(app, "_update_ready", None)

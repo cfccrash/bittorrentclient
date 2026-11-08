@@ -1,5 +1,5 @@
 """Custom window frames: strip, buttons, maximise/restore, resize grips, themed message boxes. Needs Tk + a display."""
-import os, sys, tempfile, time
+import os, sys, tempfile, time, types
 os.environ["BTC_CHROME"] = "1"
 os.environ["APPDATA"] = tempfile.mkdtemp()   # never touch the user's real data folder / error.log
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -62,7 +62,13 @@ def main():
         assert root.winfo_width() == w0 + 80, (root.winfo_width(), w0)
     # toolbar: the part over the sidebar is exactly as wide as the sidebar column below it
     root.update()
-    assert app._tb_left.winfo_width() == app._side.winfo_width(), (app._tb_left.winfo_width(), app._side.winfo_width())
+    # toolbar: Exit / Restart / Settings sit over the column, the torrent actions start where the list starts
+    app._draw_toolbar(); colw = app._side.winfo_width()
+    assert all(0 <= app.btn[k].x0 < app.btn[k].x1 <= colw for k in ("exit", "restart", "settings")), colw
+    assert app.btn["resume"].x0 >= colw and app.btn["folder"].x1 < app.toolbar.winfo_width()
+    # one picture behind the whole window: title strip, toolbar, column, list and status bar all draw it
+    for c in (app.chrome.bar, app.toolbar, app.side_cv, app.statusbar):
+        assert any(c.type(i) == "image" for i in c.find_all()), c
     # dialogs get a strip and a close button
     dlg = dialogs.AboutDialog(app); root.update()
     assert dlg.chrome and dlg.overrideredirect()
@@ -99,8 +105,13 @@ def main():
     sw.destroy()
     app.empty.update(); root.update(); os.system("import -window root /tmp/chrome_empty.png 2>/dev/null")
     # tooltips never outlive the pointer / the window
-    tw = app.btn["add"]
-    tt = [t for t in ui.Tooltip.live if t.widget is tw.label or t.widget is tw][0]
+    # the column's buttons are drawn on its canvas (no boxes): one tooltip, placed under the pointed-at button
+    tt = app._side_tip
+    app.side_cv.update()
+    add = app.btn["add"]; app._side_hover = add
+    r = tt.region(); assert r and r[3] - r[1] == add.y1 - add.y0 > 0, r
+    assert app._side_item_at(types.SimpleNamespace(y=(add.y0 + add.y1) // 2)) is add
+    assert app._side_item_at(types.SimpleNamespace(y=app._side_hits[0][0] + 1)) == app._side_hits[0][2]
     tt.delay = 1; tt.text = "tip"; tt._inside = lambda: True
     tt._show(); root.update(); assert tt.tip is not None
     ui.Tooltip.hide_all(); assert tt.tip is None

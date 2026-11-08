@@ -93,12 +93,15 @@ class Style:
     def configure(self, name, **kw): Style.calls.append(("configure", name, kw))
     def map(self, name, **kw): Style.calls.append(("map", name, kw))
     def layout(self, name, spec=None): Style.calls.append(("layout", name))
+    def element_create(self, name, *a, **kw): Style.calls.append(("element_create", name))
 
 
 class Font:
     def __init__(self, root=None, **kw): self.kw = kw
     def configure(self, **kw): pass
     def actual(self, k): return "Segoe UI"
+    def metrics(self, k=None): return 20
+    def measure(self, text): return 8 * len(str(text))
 
 
 def install():
@@ -237,10 +240,10 @@ def main():
     app.apply_settings(300, 150, "require", "prefer", False, "dark", tmp)
     assert app.mgr.down.rate == 300 * 1024 and app.mgr.encryption == "require" and app.mgr.utp_mode == "prefer"
     assert app.P is ui.DARK and app.tree.tags["paused"]["foreground"] == ui.DARK["muted"]
-    assert app.btn["add"].P is ui.DARK and app.btn["add"].label.opts["bg"] == app.btn["magnet"].label.opts["bg"] == ui.DARK["surface"]
+    assert app.btn["add"].P is ui.DARK and app.btn["magnet"].P is ui.DARK and app.btn["resume"].P is ui.DARK
     assert app.menu.opts["bg"] == ui.DARK["surface"] and app.root.opts["bg"] == ui.DARK["bg"]
     app.apply_settings(0, 0, "prefer", "fallback", False, "light", tmp)
-    assert app.P is ui.LIGHT and app.btn["add"].label.opts["bg"] == app.btn["magnet"].label.opts["bg"] == ui.LIGHT["surface"]
+    assert app.P is ui.LIGHT and app.btn["add"].P is ui.LIGHT and app.btn["resume"].P is ui.LIGHT
     import json
     saved = json.load(open(app.state_file))
     assert saved["theme"] == "light" and saved["encryption"] == "prefer" and saved["portmap"] is False

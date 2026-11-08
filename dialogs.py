@@ -231,7 +231,7 @@ class FilesDialog(_Dialog):
             vals = (fmt_size(n["size"]),)
             if self.progress:
                 vals += (self._done_text(n),)
-            self.tree.insert(parent, "end", iid=iid, text=self._label(iid), values=vals, open=True)
+            self.tree.insert(parent, "end", iid=iid, text=self._label(iid), values=vals, open=True, **self._mark(iid))
             self._insert(iid, n["kids"])
 
     def _done_text(self, n):
@@ -247,12 +247,19 @@ class FilesDialog(_Dialog):
         return "off" if n == 0 else "on" if n == len(f) else "part"
 
     def _label(self, iid):
+        if self._mark(iid):
+            return "  " + self.nodes[iid]["name"]
         glyph = {"on": CHECK_ON, "off": CHECK_OFF, "part": CHECK_PART}[self.state(iid)]
         return "%s  %s" % (glyph, self.nodes[iid]["name"])
 
+    def _mark(self, iid):
+        """The round tick box (green when ticked) as the row's image; {} falls back to the text glyphs."""
+        img = ui.check_images().get(self.state(iid) + "_tight")
+        return {"image": img} if img is not None else {}
+
     def _refresh_all(self):
         for iid in self.nodes:
-            self.tree.item(iid, text=self._label(iid))
+            self.tree.item(iid, text=self._label(iid), **self._mark(iid))
         chosen = sorted(self.on)
         size = sum(self.t.files[i][1] for i in chosen)
         self.summary.configure(text="%d of %d files selected  \u00B7  %s of %s" % (

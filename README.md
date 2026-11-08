@@ -399,3 +399,8 @@ downloaded yet waits for it instead of failing.
 ### 1.9.26
 - **Snap really works now** (1.9.25 did not): dragging the title bar to a screen edge or corner snaps the window, double-click maximises / restores, the edges resize it, and hovering the maximise button is answered like a standard Windows maximise button (Snap Layouts). Moving the window no longer flickers or leaves a ghost trail - Windows moves it itself.
 - Pressing Alt on its own no longer makes the window stop responding until a click.
+
+### 1.9.27
+- **One aurora behind the whole window:** the artwork now runs corner to corner as a single picture - behind the title bar, toolbar, left column, torrent list, details tabs and status bar - with no lines or bands between them. The toolbar and status bar are drawn on it too (their buttons and links light up when you point at them).
+- **The aurora artwork now runs under the left column:** the dividing line between the column and the torrent list is gone, and the artwork is centred on the column and list together and stretched wider, so its wings reach out across the column. The column's buttons (Add torrent, Magnet link, Search online, Create torrent, RSS feeds, Library) no longer sit in boxes: they are drawn straight on the artwork and only light up when you point at them.
+- **Round tick boxes:** every tick box in the app (Settings, add / create torrent, RSS, search, the Files dialog and the "Download in order" menu item) is now a circle that lights up green when it is ticked.

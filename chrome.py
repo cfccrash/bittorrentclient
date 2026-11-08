@@ -77,6 +77,7 @@ class Chrome:
             kids = win.pack_slaves()
             self.bar.pack(side="top", fill="x", **({"before": kids[0]} if kids else {}))
         self.img = _banner(win, self.h) if P.get("bg", "#fff")[1:2] < "8" else None      # artwork only on dark themes
+        self.art = None        # optional fn(canvas): the owner draws its own artwork behind the strip (main window)
         self.bar.bind("<Configure>", lambda e: self.draw())
         self.bar.bind("<Motion>", self._motion)
         self.bar.bind("<Leave>", lambda e: self._set_hover(None))
@@ -127,10 +128,14 @@ class Chrome:
         c, P, h = self.bar, self.P, self.h
         c.delete("all")
         w = max(c.winfo_width(), 1)
-        c.configure(bg=STRIP if self.img else P["surface2"])
-        if self.img:
+        if self.art is not None:              # one picture across the whole window, the strip included
+            c.configure(bg=P["bg"])
+            self.art(c)
+        elif self.img:
+            c.configure(bg=STRIP)
             c.create_image(w // 2, h // 2, image=self.img)
         else:
+            c.configure(bg=P["surface2"])
             c.create_line(0, h - 1, w, h - 1, fill=P["border"])
         c.create_text(self.px(14), h // 2, text=self.title_text, anchor="w", fill=P["fg"], font=self.font)
         glyph = P["fg"]
