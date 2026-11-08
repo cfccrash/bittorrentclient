@@ -251,6 +251,8 @@ def style_ttk(root, P, F, px):
     st.configure(".", background=P["bg"], foreground=P["fg"], fieldbackground=P["surface"],
                  bordercolor=P["border"], lightcolor=P["surface"], darkcolor=P["surface"],
                  troughcolor=P["trough"], focuscolor=P["bg"], font=F.ui)
+    # clam lights up any widget in the 'active' state; frames must never change colour (see-through dialogs)
+    st.map(".", background=[("disabled", P["bg"]), ("active", P["bg"])])
     st.configure("TFrame", background=P["bg"])
     st.configure("Card.TFrame", background=P["surface"])
     st.configure("TLabel", background=P["bg"], foreground=P["fg"])

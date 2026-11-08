@@ -156,7 +156,9 @@ class _Dialog(tk.Toplevel):
             if x is None or x is self:
                 continue
             try:
-                if isinstance(x, ttk.Widget) and x.instate(["!disabled"]):
+                # only controls take the hover ('active') state - a frame in it would get the theme's light fill
+                if isinstance(x, (ttk.Button, ttk.Checkbutton, ttk.Radiobutton, ttk.Combobox, ttk.Menubutton)) \
+                        and x.instate(["!disabled"]):
                     x.state(["active"] if on else ["!active"])
             except tk.TclError:
                 pass

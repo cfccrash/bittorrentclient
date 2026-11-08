@@ -441,3 +441,6 @@ downloaded yet waits for it instead of failing.
 ### 1.9.36
 - Settings (and the other option windows) no longer open as a black panel: the artwork behind them is drawn in the right place and stays between the main window and the panel.
 - Pointing at Settings sections and options now lights them up smoothly, like the left column, and clicking in the empty part of a row selects it instead of closing Settings. (The mouse used to fall through the see-through gaps between the words.)
+
+### 1.9.37
+- Settings: pointing at a page no longer turns it into a black panel with white frames around the groups - only buttons, tick boxes and drop-downs react to the pointer.
