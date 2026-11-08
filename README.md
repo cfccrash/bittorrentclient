@@ -418,3 +418,6 @@ downloaded yet waits for it instead of failing.
 ### 1.9.30
 - Full screen: Windows can no longer draw its own (old-style) title bar over the Aurora one.
 - Clicking the minimise button no longer risks closing the app with an error.
+
+### 1.9.31
+- No line under the torrent list's column headings.

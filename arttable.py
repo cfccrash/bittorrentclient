@@ -16,7 +16,8 @@ _ids = itertools.count(1)
 
 class ArtTable(tk.Canvas):
     def __init__(self, master, columns=(), show="headings", selectmode="extended", height=0, rowheight=40,
-                 head_height=32, inset=0, palette=None, font=None, head_font=None, draw_bg=None, painters=None, **kw):
+                 head_height=32, inset=0, palette=None, font=None, head_font=None, draw_bg=None, painters=None,
+                 head_line=True, **kw):
         super().__init__(master, bd=0, highlightthickness=0, takefocus=1, **kw)
         self.rows, self.order, self.sel = {}, [], ()
         self.headings, self.columns, self.tags = {}, {}, {}
@@ -24,6 +25,7 @@ class ArtTable(tk.Canvas):
         self.show_tree = "tree" in str(show)
         self.selectmode = selectmode
         self.rowheight, self.head_height, self.inset = int(rowheight), int(head_height), int(inset)
+        self.head_line = head_line       # a thin line under the heading row
         self._P, self._font, self._head_font, self._draw_bg = palette, font, head_font, draw_bg
         self._height = int(height)
         self._top = 0                  # index (in self.order) of the first visible row
@@ -284,7 +286,8 @@ class ArtTable(tk.Canvas):
                 hot = col == self._hover_head and hd.get("command")
                 self.create_text(x + pad, hh // 2, anchor="w", font=hf, fill=P["fg"] if hot else P["muted"],
                                  text=self._elide(text, hf, cw - 2 * pad))
-        self.create_line(self.inset, hh - 1, w - self.inset, hh - 1, fill=P["border"])
+        if self.head_line:
+            self.create_line(self.inset, hh - 1, w - self.inset, hh - 1, fill=P["border"])
         x0, x1 = self.inset + 1, w - self.inset - 2
         for n, iid in enumerate(self.order[self._top:self._top + self._visible()]):
             row, y = self.rows[iid], hh + n * rh

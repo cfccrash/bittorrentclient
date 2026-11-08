@@ -864,7 +864,7 @@ class App:
         self.tree = arttable.ArtTable(body, columns=self.cols, show="headings", selectmode="extended", height=10,
                                       rowheight=self.px(40), head_height=self.px(36), palette=lambda: self.P,
                                       font=self.F.ui, head_font=self.F.small, draw_bg=self._draw_list_art,
-                                      painters={"progress": self._paint_bar})
+                                      painters={"progress": self._paint_bar}, head_line=False)
         for c, h, anchor in COLS:   # every column gets the same width (kept equal by _equalize_columns)
             self.tree.heading(c, text=h, anchor=anchor, command=lambda c=c: self.sort_by(c))
             self.tree.column(c, width=self.MIN_COL, minwidth=self.MIN_COL, stretch=False, anchor=anchor)
