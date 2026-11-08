@@ -35,7 +35,7 @@ def _inverse(d):
 class _Dialog(tk.Toplevel):
     """Base: themed, modal, centred over the main window, Esc closes."""
 
-    def __init__(self, app, title):
+    def __init__(self, app, title, strip=True):
         super().__init__(app.root)
         self.app = app
         self.px = app.px                 # sizes below are for 96 dpi; px() scales them on high-DPI screens
@@ -43,14 +43,20 @@ class _Dialog(tk.Toplevel):
         self.chrome = None
         self.configure(bg=app.P["bg"])
         self.transient(app.root)
-        if chrome.enabled(app.cfg):
+        if not strip:                    # a drop-down panel: no title strip, just a thin border
+            try:
+                self.overrideredirect(True)
+                self.configure(highlightthickness=1, highlightbackground=app.P["border"], highlightcolor=app.P["border"])
+            except tk.TclError:
+                pass
+        elif chrome.enabled(app.cfg):
             self.chrome = chrome.attach(self, app.P, app.px, title, resizable=False, buttons=("close",),
                                         font=app.F.bold)
         self.title(title)
         self.resizable(False, False)
         self.bind("<Escape>", lambda e: self.destroy())
         self.protocol("WM_DELETE_WINDOW", self.destroy)
-        if not self.chrome:
+        if not self.chrome and strip:
             self.after(60, lambda: ui.set_glass(self, app.P) if self.winfo_exists() else None)
 
     def title(self, text=None):
@@ -67,8 +73,11 @@ class _Dialog(tk.Toplevel):
             self.chrome.set_resizable(bool(w or h))
         return r
 
-    def show(self):
+    def _place(self):
         center_over(self, self.app.root)
+
+    def show(self):
+        self._place()
         prev = None
         try:
             prev = self.app.root.grab_current()
@@ -433,35 +442,50 @@ class AddDialog(_Dialog):
 
 
 class SettingsDialog(_Dialog):
+    """Settings drop down from the gear button: at first only the list of sections (with Save / Cancel). Clicking a
+    section opens its page beside the list, the panel only as big as that page needs; clicking it again folds it."""
+
     def __init__(self, app):
-        super().__init__(app, "Settings")
+        super().__init__(app, "Settings", strip=False)
         cfg, mgr = app.cfg, app.mgr
-        outer = ttk.Frame(self, padding=(20, 18, 20, 18))
+        P = app.P
+        outer = ttk.Frame(self, padding=(10, 10, 10, 10))
         outer.pack(fill="both", expand=True)
         body = ttk.Frame(outer)
         body.pack(fill="both", expand=True)
-        P = app.P
-        nav = tk.Frame(body, bg=P["bg"], bd=0, highlightthickness=0)
-        nav.pack(side="left", fill="y", padx=(0, 14))
-        tk.Frame(body, bg=P["border"], width=1, bd=0, highlightthickness=0).pack(side="left", fill="y")
-        content = ttk.Frame(body)
-        content.pack(side="left", fill="both", expand=True)
+        side = tk.Frame(body, bg=P["bg"], bd=0, highlightthickness=0)
+        side.pack(side="left", fill="y")
+        nav = tk.Frame(side, bg=P["bg"], bd=0, highlightthickness=0)
+        nav.pack(side="top", fill="x")
+        self._sep = tk.Frame(body, bg=P["border"], width=1, bd=0, highlightthickness=0)
+        # the open page sits in a canvas, so a page taller than the room below the gear scrolls (mouse wheel)
+        self._content = tk.Frame(body, bg=P["bg"], bd=0, highlightthickness=0)
+        self._cv = tk.Canvas(self._content, bg=P["bg"], bd=0, highlightthickness=0, width=1, height=1)
+        self._sb = ttk.Scrollbar(self._content, orient="vertical", command=self._cv.yview)
+        self._cv.configure(yscrollcommand=self._sb.set)
+        self._cv.pack(side="left", fill="both", expand=True)
+        content = self._inner = ttk.Frame(self._cv)
+        self._cv.create_window(0, 0, window=content, anchor="nw")
         content.columnconfigure(0, weight=1)
-        content.rowconfigure(0, weight=1)
-        self.pages, self.nav_rows = {}, {}
+        self.bind("<MouseWheel>", self._wheel, add="+")
+        self.pages, self.nav_rows, self._chev = {}, {}, {}
+        self.current_page = None
 
         def tab(title):
-            """A settings page: listed down the left side, shown on the right when its name is clicked. All pages sit
-            in the same grid cell, so the window keeps the size of the biggest one."""
+            """A settings page: listed in the column; shown beside it (cascading) when its name is clicked."""
             f = ttk.Frame(content, padding=(18, 4, 4, 10))
             f.columnconfigure(1, weight=1)
-            f.grid(row=0, column=0, sticky="nsew")
-            row = tk.Label(nav, text=title, anchor="w", font=app.F.ui, bd=0, cursor="hand2", width=14,
-                           padx=14, pady=8)
+            row = tk.Frame(nav, bd=0, highlightthickness=0, cursor="hand2")
+            name = tk.Label(row, text=title, anchor="w", font=app.F.ui, bd=0, padx=14, pady=8, cursor="hand2")
+            chev = tk.Label(row, text="\u203A", font=app.F.ui, bd=0, padx=10, cursor="hand2")
+            name.pack(side="left", fill="x", expand=True)
+            chev.pack(side="right")
             row.pack(fill="x", pady=1)
-            row.bind("<Button-1>", lambda e, t=title: self.show_page(t))
+            for w in (row, name, chev):
+                w.bind("<Button-1>", lambda e, t=title: self.show_page(t))
             self.pages[title] = f
-            self.nav_rows[title] = row
+            self.nav_rows[title] = name
+            self._chev[title] = (row, chev)
             return f
 
         # -- General
@@ -723,21 +747,101 @@ class SettingsDialog(_Dialog):
         # -- About: version, credits, data folder (the same content as the About window)
         about_content(tab("About"), app, self.px).grid(row=0, column=0, sticky="nsew")
 
-        self.show_page("General")
-        btns = ttk.Frame(outer)
-        btns.pack(fill="x", pady=(16, 0))
-        ttk.Button(btns, text="Save", style="Accent.TButton", command=self._ok).pack(side="right")
-        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right", padx=(0, 8))
+        # Save / Cancel under the section list
+        btns = ttk.Frame(side)
+        btns.pack(side="top", fill="x", pady=(14, 0))
+        ttk.Button(btns, text="Save", style="Accent.TButton", command=self._ok).pack(fill="x")
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(fill="x", pady=(6, 0))
         self.bind("<Return>", lambda e: self._ok())
+        self._paint_nav()
 
     def show_page(self, title):
-        P = self.app.P
-        self.pages[title].tkraise()
+        """Open `title`'s page beside the list (or fold it away when it is already open)."""
+        if title == self.current_page:
+            title = None
+        for name, f in self.pages.items():
+            if name == title:
+                f.grid(row=0, column=0, sticky="nsew")
+            else:
+                f.grid_remove()
+        if title is None:
+            self._sep.pack_forget()
+            self._content.pack_forget()
+        elif self.current_page is None:
+            self._sep.pack(side="left", fill="y", padx=(10, 0))
+            self._content.pack(side="left", fill="both", expand=True)
         self.current_page = title
-        for name, row in self.nav_rows.items():
-            on = name == title
-            row.configure(bg=P["sel"] if on else P["bg"], fg=P["sel_fg"] if on else P["fg"],
-                          font=self.app.F.bold if on else self.app.F.ui)
+        self._paint_nav()
+        self._fit()
+
+    def _paint_nav(self):
+        P = self.app.P
+        for name, label in self.nav_rows.items():
+            on = name == self.current_page
+            bg, fg = (P["sel"], P["sel_fg"]) if on else (P["bg"], P["fg"])
+            row, chev = self._chev[name]
+            for w in (row, label, chev):
+                w.configure(bg=bg)
+            label.configure(fg=fg, font=self.app.F.bold if on else self.app.F.ui)
+            chev.configure(fg=fg if on else P["muted"])
+
+    def _anchor(self):
+        """Screen position just under the gear button (top-left of the panel)."""
+        app = self.app
+        try:
+            b, bar = app.btn["settings"], app.toolbar
+            return bar.winfo_rootx() + b.x0, bar.winfo_rooty() + b.y1 + 2
+        except (AttributeError, KeyError, tk.TclError, TypeError):
+            return None
+
+    def _wheel(self, e):
+        try:
+            if self.current_page and self._sb.winfo_ismapped():
+                self._cv.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        except tk.TclError:
+            pass
+
+    def _fit(self):
+        """Exactly as big as what is shown: the list alone, or the list plus the open page - but never past the
+        bottom of the screen (then the page scrolls)."""
+        try:
+            self.update_idletasks()
+            if self.current_page:
+                pw, ph = self._inner.winfo_reqwidth(), self._inner.winfo_reqheight()
+                at = self._anchor()
+                top = at[1] if at else self.winfo_rooty()
+                try:
+                    wx, wy, ww, wh = ui.work_area(self)
+                    room = wy + wh - top
+                except Exception:
+                    room = self.winfo_screenheight() - top
+                room -= self.px(30)                                    # padding + border
+                ch = max(self.px(200), min(ph, room))
+                scroll = ph > ch
+                self._cv.configure(width=pw, height=ch, scrollregion=(0, 0, pw, ph), yscrollincrement=self.px(30))
+                self._cv.yview_moveto(0)
+                if scroll:
+                    self._sb.pack(side="right", fill="y")
+                else:
+                    self._sb.pack_forget()
+                self.update_idletasks()
+            w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+            at = self._anchor()
+            if at is None:
+                self.geometry("%dx%d" % (w, h))
+                return
+            x, y = at
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+            x = max(0, min(x, sw - w))
+            y = max(0, min(y, sh - h))
+            self.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        except (tk.TclError, TypeError, ValueError):
+            pass
+
+    def _place(self):
+        if self._anchor() is None:
+            super()._place()
+        self._fit()
 
     def _browse(self):
         d = filedialog.askdirectory(parent=self, title="Default save folder", initialdir=self.folder.get() or None)

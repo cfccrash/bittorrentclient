@@ -446,9 +446,11 @@ def main():
 
     # ---- settings: sections listed down the left, the chosen page shown beside them
     sdn = dialogs.SettingsDialog(app)
-    assert list(sdn.pages) == ["General", "Media", "Downloads", "Speed", "Connection", "About"] and sdn.current_page == "General"
+    # a drop-down: only the section list at first; a section's page cascades beside it, clicking it again folds it
+    assert list(sdn.pages) == ["General", "Media", "Downloads", "Speed", "Connection", "About"] and sdn.current_page is None
     sdn.show_page("Connection"); assert sdn.current_page == "Connection"
     assert sdn.nav_rows["Connection"].opts["bg"] == app.P["sel"] and sdn.nav_rows["General"].opts["bg"] == app.P["bg"]
+    sdn.show_page("Connection"); assert sdn.current_page is None
 
     # ---- restart / exit buttons
     with mock.patch.object(app, "quit") as q_mock, mock.patch.object(app.mgr, "snapshot", return_value=[]):

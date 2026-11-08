@@ -421,3 +421,6 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.31
 - No line under the torrent list's column headings.
+
+### 1.9.32
+- **Settings drops down from the gear button:** it opens just under it, showing only the list of sections (General, Media, Downloads, Speed, Connection, About) with Save and Cancel. Click a section and its page opens beside the list, only as big as it needs; click it again to fold it away. A page taller than the screen scrolls (mouse wheel).
