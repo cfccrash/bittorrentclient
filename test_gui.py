@@ -251,7 +251,7 @@ def main():
     # ---- toolbar button behaviour: hover, disabled, click
     clicks = []
     b = ui.ToolButton(root, app.F, ui.ICON_ADD, "X", lambda: clicks.append(1), accent=False); b.restyle(ui.LIGHT)
-    b._enter(None); assert b.opts.get("bg") == ui.LIGHT["hover"]
+    b._enter(None); assert b.opts.get("bg") == ui.LIGHT["surface"] and b.label.opts["font"] is app.F.bold   # bold, no box
     b._press(None); b._release(None); assert clicks == [1]
     b.set_enabled(False); b._press(None); b._release(None); assert clicks == [1] and b.label.opts["fg"] == ui.LIGHT["disabled"]
 
@@ -449,7 +449,8 @@ def main():
     # a drop-down: only the section list at first; a section's page cascades beside it, clicking it again folds it
     assert list(sdn.pages) == ["General", "Media", "Downloads", "Speed", "Connection", "About"] and sdn.current_page is None
     sdn.show_page("Connection"); assert sdn.current_page == "Connection"
-    assert sdn.nav_rows["Connection"].opts["bg"] == app.P["sel"] and sdn.nav_rows["General"].opts["bg"] == app.P["bg"]
+    assert sdn.nav_rows["Connection"].opts["font"] is app.F.bold and sdn.nav_rows["General"].opts["font"] is app.F.ui
+    assert sdn.nav_rows["Connection"].opts["bg"] == sdn.nav_rows["General"].opts["bg"] == app.P["bg"]      # no box
     sdn.show_page("Connection"); assert sdn.current_page is None
 
     # ---- restart / exit buttons

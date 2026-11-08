@@ -142,17 +142,17 @@ class Chrome:
         glyph = P["fg"]
         for name, (x0, y0, x1, y1) in self._button_boxes().items():
             hot = self.hover == name
-            if hot:
-                c.create_rectangle(x0, y0, x1, y1, fill="#C42B1C" if name == "close" else P["hover"], width=0)
+            if hot and name == "close":         # only close keeps its red (Windows convention)
+                c.create_rectangle(x0, y0, x1, y1, fill="#C42B1C", width=0)
             cx, cy, s = (x0 + x1) // 2, (y0 + y1) // 2, self.px(5)
             col = "#FFFFFF" if hot and name == "close" else glyph
-            lw = max(1, self.px(1))
+            lw = max(1, self.px(1)) * (2 if hot and name != "close" else 1)    # pointed at: bolder glyph
             if name == "min":
                 c.create_line(cx - s, cy, cx + s + 1, cy, fill=col, width=lw)
             elif name == "max":
                 if self.maxed:
                     c.create_rectangle(cx - s + 2, cy - s, cx + s, cy + s - 2, outline=col, width=lw)
-                    c.create_rectangle(cx - s, cy - s + 2, cx + s - 2, cy + s, outline=col, width=lw, fill=c["bg"] if not hot else P["hover"])
+                    c.create_rectangle(cx - s, cy - s + 2, cx + s - 2, cy + s, outline=col, width=lw, fill=c["bg"])
                 else:
                     c.create_rectangle(cx - s, cy - s, cx + s, cy + s, outline=col, width=lw)
             elif name == "full":                 # four corners: pointing out = go full screen, in = leave it

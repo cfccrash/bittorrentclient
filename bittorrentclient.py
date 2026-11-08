@@ -92,7 +92,7 @@ class _DrawnButton:
     def __init__(self, app, key, icon, text, command, tip, raised=False):
         self.app, self.key, self.icon, self.text, self.command, self.tip = app, key, icon, text, command, tip
         self.raised, self.enabled, self.P = raised, True, None
-        self.flat = False                # True: never a fill - pointed at, its text turns bold instead
+        self.flat = True                 # never a fill - pointed at, its text (or icon) turns bold instead
         self.x0 = self.y0 = self.x1 = self.y1 = 0
         self.on_change = None            # called when it needs redrawing (enabled state changed)
 
@@ -136,7 +136,10 @@ class _DrawnButton:
         bold = self.flat and self.enabled and (hover or down)
         mid = (y0 + y1) // 2
         if not self.text:
-            cv.create_text((x0 + x1) // 2, mid, text=self.icon, font=F.icon, fill=fg, tags=tags)
+            cx = (x0 + x1) // 2
+            cv.create_text(cx, mid, text=self.icon, font=F.icon, fill=fg, tags=tags)
+            if bold:                                            # icons have no bold: draw it twice, 1 px apart
+                cv.create_text(cx + 1, mid, text=self.icon, font=F.icon, fill=fg, tags=tags)
             return
         x = x0 + (12 if self.icon else 14)
         if self.icon:
@@ -364,6 +367,8 @@ class App:
         self.tree.bind("<space>", self._on_space)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.bind("<F11>", lambda e: self.toggle_fullscreen())
+        # clicks on the drawn parts (canvases) do not take the keyboard focus: make sure the window has it
+        root.bind("<ButtonPress>", lambda e: root.focus_set() if root.focus_get() is None else None, add="+")
         root.bind("<Escape>", lambda e: self.toggle_fullscreen(False) if self.is_fullscreen() and
                   e.widget is not getattr(self, "search_entry", None) else None, add="+")
         self.apply_theme()
@@ -582,7 +587,7 @@ class App:
         # search box, top right: magnifier icon + entry (a real widget, placed on the canvas)
         self.search = tk.StringVar(value="")
         box = tk.Frame(cv, bd=0, highlightthickness=1)
-        self._themed.append((box, {"bg": "bg", "highlightbackground": "border", "highlightcolor": "accent"}))
+        self._themed.append((box, {"bg": "bg", "highlightbackground": "border", "highlightcolor": "muted"}))
         if self.F.has_icons:
             icon = tk.Label(box, text=ui.ICON_SEARCH, font=self.F.icon, bd=0)
         else:
@@ -1083,10 +1088,9 @@ class App:
             text = self.tabs.tab(tid, "text")
             w = self.F.ui.measure(text) + 2 * pad
             on = i == cur
-            c.create_text(x + w // 2, mid, text=text, font=self.F.ui,
-                          fill=P["fg"] if on or i == self._tab_hover else P["muted"])
-            if on:
-                c.create_rectangle(x + pad, h - px(3), x + w - pad, h - 1, fill=P["accent"], width=0)
+            lit = on or i == self._tab_hover                # no underline bar: bold white instead
+            c.create_text(x + w // 2, mid, text=text, font=self.F.bold if lit else self.F.ui,
+                          fill=P["fg"] if lit else P["muted"])
             self._tab_hits.append((x, x + w, i))
             x += w
 
@@ -1827,7 +1831,7 @@ class App:
         for b in self.btn.values():
             b.restyle(P)
         for m in (self.menu, self.queue_menu, self.prio_menu, self.cat_menu, self.files_menu, self.peers_menu):
-            m.configure(bg=P["surface"], fg=P["fg"], activebackground=P["sel"], activeforeground=P["sel_fg"],
+            m.configure(bg=P["surface"], fg=P["muted"], activebackground=P["surface"], activeforeground=P["fg"],
                         bd=0, relief="flat")
         self.tree.tag_configure("paused", foreground=P["muted"])
         self.tree.tag_configure("error", foreground=P["bad"])

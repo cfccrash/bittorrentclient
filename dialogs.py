@@ -100,6 +100,9 @@ class _Dialog(tk.Toplevel):
         try:
             if prev is not None and prev.winfo_exists():
                 prev.grab_set()
+                prev.focus_force()
+            else:                    # give the keyboard back to the main window (F11, Ctrl+V ... else go nowhere)
+                self.app.root.focus_force()
         except tk.TclError:
             pass
         return self.result
@@ -483,6 +486,8 @@ class SettingsDialog(_Dialog):
             row.pack(fill="x", pady=1)
             for w in (row, name, chev):
                 w.bind("<Button-1>", lambda e, t=title: self.show_page(t))
+                w.bind("<Enter>", lambda e, t=title: self._paint_nav(hover=t))
+                w.bind("<Leave>", lambda e: self._paint_nav())
             self.pages[title] = f
             self.nav_rows[title] = name
             self._chev[title] = (row, chev)
@@ -765,25 +770,23 @@ class SettingsDialog(_Dialog):
             else:
                 f.grid_remove()
         if title is None:
-            self._sep.pack_forget()
             self._content.pack_forget()
         elif self.current_page is None:
-            self._sep.pack(side="left", fill="y", padx=(10, 0))
-            self._content.pack(side="left", fill="both", expand=True)
+            self._content.pack(side="left", fill="both", expand=True, padx=(10, 0))
         self.current_page = title
         self._paint_nav()
         self._fit()
 
-    def _paint_nav(self):
+    def _paint_nav(self, hover=None):
+        """No boxes: the open section and the pointed-at one are bold white."""
         P = self.app.P
         for name, label in self.nav_rows.items():
-            on = name == self.current_page
-            bg, fg = (P["sel"], P["sel_fg"]) if on else (P["bg"], P["fg"])
+            lit = name == self.current_page or name == hover
             row, chev = self._chev[name]
             for w in (row, label, chev):
-                w.configure(bg=bg)
-            label.configure(fg=fg, font=self.app.F.bold if on else self.app.F.ui)
-            chev.configure(fg=fg if on else P["muted"])
+                w.configure(bg=P["bg"])
+            label.configure(fg=P["fg"], font=self.app.F.bold if lit else self.app.F.ui)
+            chev.configure(fg=P["fg"] if lit else P["muted"])
 
     def _anchor(self):
         """Screen position just under the gear button (top-left of the panel)."""
@@ -1770,7 +1773,7 @@ class CreateTorrentDialog(_Dialog):
                   style="Muted.TLabel").grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 4))
         self.trackers = tk.Text(body, height=4, width=64, bd=0, relief="flat", font=app.F.mono,
                                 bg=app.P["surface"], fg=app.P["fg"], insertbackground=app.P["fg"],
-                                highlightthickness=1, highlightbackground=app.P["border"], highlightcolor=app.P["accent"])
+                                highlightthickness=1, highlightbackground=app.P["border"], highlightcolor=app.P["muted"])
         self.trackers.insert("1.0", DEFAULT_TRACKERS)
         self.trackers.grid(row=4, column=0, columnspan=3, sticky="ew")
         opt = ttk.Frame(body)
@@ -2015,7 +2018,8 @@ class CastDialog(_Dialog):
         self.msg = tk.StringVar(value="Looking for devices on your network\u2026")
         ttk.Label(body, textvariable=self.msg, style="Muted.TLabel", wraplength=self.px(420), justify="left").pack(anchor="w", pady=(4, 10))
         self.lb = tk.Listbox(body, height=7, width=48, exportselection=False, bd=0, highlightthickness=1, activestyle="none",
-                             bg=app.P["surface"], fg=app.P["fg"], selectbackground=app.P["accent"], font=app.F.ui)
+                             bg=app.P["surface"], fg=app.P["muted"], selectbackground=app.P["surface"],
+                             selectforeground=app.P["fg"], font=app.F.ui)
         self.lb.pack(fill="both", expand=True)
         row = ttk.Frame(body)
         row.pack(fill="x", pady=(12, 0))
@@ -2119,7 +2123,7 @@ class Toast(tk.Toplevel):
             self.attributes("-topmost", True)
         except tk.TclError:
             pass
-        self.configure(bg=P["accent"])
+        self.configure(bg=P["border"])
         inner = tk.Frame(self, bg=P["surface"], padx=app.px(16), pady=app.px(12))
         inner.pack(padx=app.px(2), pady=app.px(2))
         tk.Label(inner, text=title, bg=P["surface"], fg=P["fg"], font=app.F.bold, anchor="w").pack(fill="x")

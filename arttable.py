@@ -292,15 +292,11 @@ class ArtTable(tk.Canvas):
         for n, iid in enumerate(self.order[self._top:self._top + self._visible()]):
             row, y = self.rows[iid], hh + n * rh
             on = iid in self.sel
-            # selection / hover are outlines, so the artwork stays visible through the row
-            if on:
-                round_rect(self, x0, y + 2, x1, y + rh - 2, max(3, rh // 6), outline=blend(P["accent"], P["bg"], 0.45),
-                           fill="", width=1)
-                self.create_rectangle(x0, y + rh // 4, x0 + 3, y + rh - rh // 4, fill=P["accent"], width=0)
-            elif iid == self._hover_row:
-                round_rect(self, x0, y + 2, x1, y + rh - 2, max(3, rh // 6), outline=P["border"], fill="", width=1)
-            fg = P["sel_fg"] if on else next((self.tags[t]["foreground"] for t in row["tags"]
-                                              if self.tags.get(t, {}).get("foreground")), P["fg"])
+            # no boxes: a selected or pointed-at row is bold white text over the artwork
+            lit = on or iid == self._hover_row
+            rf = self._bold_font() if lit else f
+            fg = P["fg"] if lit else next((self.tags[t]["foreground"] for t in row["tags"]
+                                           if self.tags.get(t, {}).get("foreground")), P["fg"])
             vals = row["values"]
             vi = 0
             for col, x, cw in layout:
@@ -313,16 +309,29 @@ class ArtTable(tk.Canvas):
                 if col in self.painters:
                     self.painters[col](self, iid, x, y, cw, rh, on)
                     continue
-                text = self._elide(str(v), f, cw - 2 * pad)
+                text = self._elide(str(v), rf, cw - 2 * pad)
                 if not text:
                     continue
                 anchor = self.columns.get(col, {}).get("anchor", "w")
                 tx = x + pad if anchor == "w" else x + cw - pad if anchor == "e" else x + cw // 2
                 self.create_text(tx, y + rh // 2, anchor=anchor if anchor in ("w", "e") else "center",
-                                 font=f, fill=fg, text=text)
+                                 font=rf, fill=fg, text=text)
         if self._ysc:
             first, last = self.yview()
             self._ysc(str(first), str(last))
+
+    def _bold_font(self):
+        b = getattr(self, "_bold", None)
+        if b is None:
+            try:
+                from tkinter import font as tkfont
+                spec = tkfont.Font(font=self._font).actual()
+                spec["weight"] = "bold"
+                b = tkfont.Font(**spec)
+            except Exception:
+                b = self._font
+            self._bold = b
+        return b
 
     # ---- mouse / keys ------------------------------------------------------------------------------------
     def _click(self, e, shift=False, ctrl=False):

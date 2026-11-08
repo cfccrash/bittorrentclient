@@ -424,3 +424,8 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.32
 - **Settings drops down from the gear button:** it opens just under it, showing only the list of sections (General, Media, Downloads, Speed, Connection, About) with Save and Cancel. Click a section and its page opens beside the list, only as big as it needs; click it again to fold it away. A page taller than the screen scrolls (mouse wheel).
+
+### 1.9.33
+- **No more boxes anywhere:** buttons (Save, Cancel, Browse ...), the Settings sections, the details tabs, torrent rows, lists in dialogs, drop-down lists, tick boxes and the right-click menu no longer show a blue or grey box. Like the left column, whatever you point at - or have chosen - turns bold white instead. (Only the window's close button keeps its red.)
+- Settings: no lines between the section list and its page, or around the groups of options.
+- F11 works again after closing Settings or any other dialog (the keyboard went back nowhere).

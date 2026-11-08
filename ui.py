@@ -228,6 +228,22 @@ def check_images(root=None, P=None, size=None, gap=0):
     return _CHECKS
 
 
+_BOLD = [None]
+
+
+def _bold_selection(e):
+    """Treeview selection shown as bold text (the selected-row colour is the normal row colour)."""
+    t = e.widget
+    try:
+        t.tag_configure("_bold", font=_BOLD[0])
+        for iid in t.tag_has("_bold"):
+            t.item(iid, tags=tuple(x for x in t.item(iid, "tags") if x != "_bold"))
+        for iid in t.selection():
+            t.item(iid, tags=tuple(t.item(iid, "tags")) + ("_bold",))
+    except tk.TclError:
+        pass
+
+
 def style_ttk(root, P, F, px):
     """(Re)configure every ttk style for palette P. `px` scales pixel sizes for the display's DPI."""
     st = ttk.Style(root)
@@ -244,24 +260,28 @@ def style_ttk(root, P, F, px):
 
     st.configure("TButton", padding=(px(16), px(7)), relief="flat", borderwidth=1, background=P["surface"],
                  foreground=P["fg"], bordercolor=P["border"], lightcolor=P["surface"], darkcolor=P["surface"])
-    st.map("TButton", background=[("pressed", P["press"]), ("active", P["hover"])],
-           bordercolor=[("focus", P["accent"])])
-    st.configure("Accent.TButton", background=P["accent"], foreground=P["accent_fg"], bordercolor=P["accent"],
-                 lightcolor=P["accent"], darkcolor=P["accent"])
-    st.map("Accent.TButton", background=[("pressed", P["accent_hover"]), ("active", P["accent_hover"])],
-           foreground=[("disabled", P["disabled"])])
+    # No boxes anywhere: buttons are plain text on the background, bold when pointed at (like the left column)
+    flat = dict(background=P["bg"], foreground=P["fg"], bordercolor=P["bg"], lightcolor=P["bg"], darkcolor=P["bg"],
+                focuscolor=P["bg"], borderwidth=0, relief="flat")
+    st.configure("TButton", **flat)
+    st.map("TButton", background=[("pressed", P["bg"]), ("active", P["bg"])], bordercolor=[("focus", P["bg"])],
+           font=[("pressed", F.bold), ("active", F.bold)], foreground=[("disabled", P["disabled"])])
+    st.configure("Accent.TButton", **flat)
+    st.map("Accent.TButton", background=[("pressed", P["bg"]), ("active", P["bg"])], bordercolor=[("focus", P["bg"])],
+           font=[("pressed", F.bold), ("active", F.bold)], foreground=[("disabled", P["disabled"])])
 
     for w in ("TEntry", "TSpinbox", "TCombobox"):
         st.configure(w, fieldbackground=P["surface"], foreground=P["fg"], insertcolor=P["fg"],
                      bordercolor=P["border"], lightcolor=P["surface"], darkcolor=P["surface"],
                      padding=px(6), arrowcolor=P["muted"], background=P["surface"])
-        st.map(w, bordercolor=[("focus", P["accent"])], arrowcolor=[("active", P["fg"])])
+        st.map(w, bordercolor=[("focus", P["muted"])], arrowcolor=[("active", P["fg"])])
     st.map("TCombobox", fieldbackground=[("readonly", P["surface"])], foreground=[("readonly", P["fg"])],
            selectbackground=[("readonly", P["surface"])], selectforeground=[("readonly", P["fg"])])
     root.option_add("*TCombobox*Listbox.background", P["surface"])
     root.option_add("*TCombobox*Listbox.foreground", P["fg"])
-    root.option_add("*TCombobox*Listbox.selectBackground", P["sel"])
-    root.option_add("*TCombobox*Listbox.selectForeground", P["sel_fg"])
+    root.option_add("*TCombobox*Listbox.foreground", P["muted"])        # the chosen one is white, no blue bar
+    root.option_add("*TCombobox*Listbox.selectBackground", P["surface"])
+    root.option_add("*TCombobox*Listbox.selectForeground", P["fg"])
 
     st.configure("TCheckbutton", background=P["bg"], foreground=P["fg"])
     # round tick boxes that light up green when ticked (instead of clam's small square)
@@ -275,8 +295,10 @@ def style_ttk(root, P, F, px):
     st.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nswe", "children": [
         ("Round.indicator", {"side": "left", "sticky": ""}),
         ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [("Checkbutton.label", {"sticky": "nswe"})]})]})])
-    st.map("TCheckbutton", background=[("active", P["bg"])], foreground=[("disabled", P["disabled"])])
-    st.configure("TLabelframe", background=P["bg"], bordercolor=P["border"])
+    st.map("TCheckbutton", background=[("active", P["bg"])], foreground=[("disabled", P["disabled"])],
+           font=[("active", F.bold)])
+    st.configure("TLabelframe", background=P["bg"], bordercolor=P["bg"], lightcolor=P["bg"], darkcolor=P["bg"],
+                 borderwidth=0, relief="flat")                               # no box lines around the groups
     st.configure("TLabelframe.Label", background=P["bg"], foreground=P["muted"], font=F.bold)
 
     st.configure("TNotebook", background=P["bg"], borderwidth=0, tabmargins=(0, 0, 0, 0))
@@ -285,23 +307,30 @@ def style_ttk(root, P, F, px):
                  bordercolor=P["bg"], lightcolor=P["bg"], darkcolor=P["bg"])   # no frame line through the artwork
     st.layout("Bare.TNotebook", [])          # no client element: clam would inset the page 2 px (a seam in the art)
     st.layout("Bare.TNotebook.Tab", [])
-    st.configure("TNotebook.Tab", padding=(px(18), px(8)), background=P["hover"], foreground=P["muted"], borderwidth=0)
+    st.configure("TNotebook.Tab", padding=(px(18), px(8)), background=P["bg"], foreground=P["muted"], borderwidth=0)
     tabpad = (px(18), px(8))
-    st.configure("TNotebook.Tab", lightcolor=P["hover"], bordercolor=P["hover"], focuscolor=P["hover"])
+    st.configure("TNotebook.Tab", lightcolor=P["bg"], bordercolor=P["bg"], focuscolor=P["bg"])
     # clam grows/shifts the selected tab through its own style map; pin every state to the same padding
-    st.map("TNotebook.Tab", background=[("selected", P["bg"])], foreground=[("selected", P["fg"])],
+    st.map("TNotebook.Tab", background=[("selected", P["bg"]), ("active", P["bg"])],
+           foreground=[("selected", P["fg"]), ("active", P["fg"])],
+           font=[("selected", F.bold), ("active", F.bold)],
            padding=[("selected", tabpad), ("!selected", tabpad)],
            expand=[("selected", (0, 0, 0, 0)), ("!selected", (0, 0, 0, 0))],
            lightcolor=[("selected", P["bg"])], bordercolor=[("selected", P["bg"])],
-           focuscolor=[("selected", P["bg"]), ("!selected", P["hover"])])
+           focuscolor=[("selected", P["bg"]), ("!selected", P["bg"])])
 
     # table
     st.configure("Treeview", background=P["surface"], fieldbackground=P["surface"], foreground=P["fg"],
                  rowheight=px(40), borderwidth=0, relief="flat", font=F.ui)
-    st.map("Treeview", background=[("selected", P["sel"])], foreground=[("selected", P["sel_fg"])])
+    # selected rows: bold white text, no bar (the bold comes from the "_bold" tag, see _bold_selection)
+    st.map("Treeview", background=[("selected", P["surface"])], foreground=[("selected", P["fg"])])
+    _BOLD[0] = F.bold
+    if not getattr(root, "_bold_sel_bound", False):
+        root.bind_class("Treeview", "<<TreeviewSelect>>", _bold_selection, add="+")
+        root._bold_sel_bound = True
     st.configure("Treeview.Heading", background=P["surface2"], foreground=P["muted"], relief="flat",
                  borderwidth=0, padding=(px(4), px(9)), font=F.small)   # text lines up with the cells below
-    st.map("Treeview.Heading", background=[("active", P["hover"])])
+    st.map("Treeview.Heading", background=[("active", P["surface2"])], foreground=[("active", P["fg"])])
     st.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])   # no border around the table
     st.configure("Dialog.Treeview", rowheight=px(30))
     st.configure("Compact.Treeview", rowheight=px(24))
@@ -329,6 +358,7 @@ class ToolButton(tk.Frame):
         super().__init__(master, cursor="hand2", bd=0, highlightthickness=0)
         self.command, self.accent, self.raised = command, accent, raised   # raised: a visible button face at rest
         self.enabled, self._hover, self._down, self.P = True, False, False, None
+        self.fonts = fonts
         self.icon = tk.Label(self, text=icon, font=fonts.icon, bd=0) if (icon and fonts.has_icons) else None
         self.label = tk.Label(self, text=text, font=fonts.ui, bd=0)
         if self.icon:
@@ -355,16 +385,9 @@ class ToolButton(tk.Frame):
         P = self.P
         if P is None:
             return
-        if not self.enabled:
-            bg, fg = P["surface"], P["disabled"]
-        elif self.accent:
-            bg, fg = (P["accent_hover"] if (self._hover or self._down) else P["accent"]), P["accent_fg"]
-        elif self.raised:              # like the sidebar buttons: a lighter face, lighter still when pointed at
-            bg = P["sel"] if self._down else P["press"] if self._hover else P["hover"]
-            fg = P["fg"]
-        else:
-            bg = P["press"] if self._down else P["hover"] if self._hover else P["surface"]
-            fg = P["fg"]
+        bg = P["surface"]                         # no boxes: pointed at, the text turns bold instead
+        fg = P["fg"] if self.enabled else P["disabled"]
+        self.label.configure(font=self.fonts.bold if (self.enabled and (self._hover or self._down)) else self.fonts.ui)
         for w in (self, self.label, self.icon):
             if w is not None:
                 w.configure(bg=bg)
