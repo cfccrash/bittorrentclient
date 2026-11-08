@@ -33,6 +33,10 @@ Current version is in `version.py`; release notes are the sections at the bottom
 - Dialogs (`_Dialog._see_through`): -transparentcolor = P['bg'] plus a borderless topmost backdrop Toplevel under the
   dialog drawing `_art_at(canvas, app.root)` (only the art shows through, not the main window's text). `_follow` acts
   only on a real geometry change - lifting windows from <Configure> loops forever.
+  Colour-keyed pixels are click-through: hover comes from `_hover_poll` (pointer position -> `_widget_at`, ttk
+  'active' state / `_hovered`), Enter/Leave are swallowed by a per-dialog bindtag, and clicks landing on the backdrop
+  are re-generated on the widget under them (`_fw_press/_fw_release`). Backdrop is transient(root) and painted from
+  the position we set (winfo_rootx is stale until Windows moves it).
   `_backdrop_watch` removes a backdrop whose dialog is gone/hidden. SettingsDialog is NOT modal (own `show`):
   `app._dropdown`; a root <ButtonPress> outside it (not on the gear), F11, or root resize (`_art_moved`) closes it.
 - Tick boxes: `ui.check_images()` (PNG made with stdlib zlib, real alpha) -> `Round.indicator` element in the TCheckbutton layout;

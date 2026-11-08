@@ -79,24 +79,129 @@ class _Dialog(tk.Toplevel):
     def _see_through(self, topmost=True):
         """The dialog's background colour is made see-through, and the main window's aurora is drawn right behind
         it in a borderless backdrop window - so the artwork shows around the options, but not the main window's
-        own text. Text, tick boxes and input fields stay solid."""
+        own text. Text, tick boxes and input fields stay solid.
+
+        Windows lets the mouse fall through see-through pixels (to the backdrop), so hover is worked out from the
+        pointer position (_hover_poll) instead of Enter/Leave events, and clicks that land on the backdrop are
+        handed to the control under the pointer."""
         if os.name != "nt" or getattr(self, "_bd", None) is not None:
             return
         try:
             bd = self._bd = tk.Toplevel(self.app.root)
             bd.overrideredirect(True)
+            bd.transient(self.app.root)          # owned like the dialog: stays between the main window and the dialog
             if topmost:
                 bd.attributes("-topmost", True)
             c = bd.canvas = tk.Canvas(bd, bd=0, highlightthickness=0, bg=self.app.P["bg"])
             c.pack(fill="both", expand=True)
             c.bind("<MouseWheel>", lambda e: getattr(self, "_wheel", lambda e: None)(e))   # wheel over the gaps
+            c.bind("<ButtonPress-1>", self._fw_press)
+            c.bind("<ButtonRelease-1>", self._fw_release)
+            c.bind("<Double-Button-1>", self._fw_press)
             self.attributes("-transparentcolor", self.app.P["bg"])
             self.bind("<Configure>", lambda e: self._follow() if e.widget is self else None, add="+")
             self.bind("<Destroy>", lambda e: bd.destroy() if e.widget is self and bd.winfo_exists() else None, add="+")
             bd._owner = self
             bd.after(500, lambda: _backdrop_watch(bd))
+            # hover only from the pointer position: Enter/Leave flicker as the pointer crosses see-through gaps
+            self._hov = self._fw_down = None
+            self.bind_class(self._hover_tag(), "<Enter>", lambda e: "break")
+            self.bind_class(self._hover_tag(), "<Leave>", lambda e: "break")
+            self._tag_tree(self)
+            self.after(60, self._hover_poll)
         except tk.TclError:
             self._bd = None
+
+    def _hover_tag(self):
+        return "SeeThrough" + str(self).replace(".", "_")
+
+    def _tag_tree(self, w):
+        tag = self._hover_tag()
+        try:
+            for k in w.winfo_children():
+                if not isinstance(k, tk.Toplevel):
+                    tags = k.bindtags()
+                    if tag not in tags:
+                        k.bindtags((tag,) + tuple(tags))
+                    self._tag_tree(k)
+        except tk.TclError:
+            pass
+
+    def _widget_at(self, x, y):
+        """The innermost visible widget of this dialog under screen point (x, y), by geometry."""
+        def inside(w):
+            try:
+                if not w.winfo_viewable():
+                    return False
+                wx, wy = w.winfo_rootx(), w.winfo_rooty()
+                return wx <= x < wx + w.winfo_width() and wy <= y < wy + w.winfo_height()
+            except tk.TclError:
+                return False
+        if not inside(self):
+            return None
+        w = self
+        while True:
+            for k in reversed(w.winfo_children()):
+                if not isinstance(k, tk.Toplevel) and inside(k):
+                    w = k
+                    break
+            else:
+                return w
+
+    def _set_hover(self, w):
+        """Hover moved from self._hov to w: ttk widgets get/lose their 'active' state (bold), others are told via
+        _hovered (the Settings section list)."""
+        old, self._hov = self._hov, w
+        for x, on in ((old, False), (w, True)):
+            if x is None or x is self:
+                continue
+            try:
+                if isinstance(x, ttk.Widget) and x.instate(["!disabled"]):
+                    x.state(["active"] if on else ["!active"])
+            except tk.TclError:
+                pass
+        self._hovered(w)
+        try:
+            cur = w.cget("cursor") if w is not None and w is not self else ""
+            self._bd.canvas.configure(cursor=cur)
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _hovered(self, w):
+        pass
+
+    def _hover_poll(self):
+        try:
+            if not self.winfo_exists():
+                return
+            x, y = self.winfo_pointerxy()
+            w = self._widget_at(x, y)
+            if w is not self._hov:
+                self._set_hover(w)
+            self.after(50, self._hover_poll)
+        except tk.TclError:
+            pass
+
+    def _fw_press(self, e):
+        """A click that fell through a see-through gap onto the backdrop: give it to the control under it."""
+        w = self._widget_at(e.x_root, e.y_root)
+        self._fw_down = w
+        if w is not None and w is not self:
+            try:
+                w.event_generate("<ButtonPress-1>", x=e.x_root - w.winfo_rootx(), y=e.y_root - w.winfo_rooty(),
+                                 rootx=e.x_root, rooty=e.y_root)
+            except tk.TclError:
+                pass
+
+    def _fw_release(self, e):
+        w, self._fw_down = self._fw_down, None
+        if w is not None and w is not self:
+            try:
+                if w.winfo_exists():
+                    w.event_generate("<ButtonRelease-1>", x=e.x_root - w.winfo_rootx(), y=e.y_root - w.winfo_rooty(),
+                                     rootx=e.x_root, rooty=e.y_root)
+            except tk.TclError:
+                pass
 
     def _follow(self, stack=False):
         """Keep the backdrop exactly under the dialog, showing the artwork's slice for that spot. Only acts when the
@@ -105,13 +210,13 @@ class _Dialog(tk.Toplevel):
         try:
             if bd is None or not bd.winfo_exists():
                 return
-            geo = "%dx%d+%d+%d" % (self.winfo_width(), self.winfo_height(), self.winfo_rootx(), self.winfo_rooty())
+            w, h, x, y = self.winfo_width(), self.winfo_height(), self.winfo_rootx(), self.winfo_rooty()
+            geo = "%dx%d+%d+%d" % (w, h, x, y)
             if geo != getattr(self, "_bd_geo", None):
-                self._bd_geo = geo
+                self._bd_geo, self._bd_xy = geo, (x, y)
                 bd.geometry(geo)
-                bd.canvas.delete("all")
-                bd.canvas.configure(width=self.winfo_width(), height=self.winfo_height())
-                self.after_idle(self._paint_backdrop)
+                bd.canvas.configure(width=w, height=h)
+                self._paint_backdrop()
             if stack:
                 bd.lift()
                 self.lift()
@@ -119,11 +224,20 @@ class _Dialog(tk.Toplevel):
             pass
 
     def _paint_backdrop(self):
+        """Draw the artwork slice for where the backdrop is. Uses the position we placed it at - the window's own
+        position is not up to date until Windows has moved it (that drew the wrong, dark part of the picture)."""
         bd = getattr(self, "_bd", None)
         try:
-            if bd is not None and bd.winfo_exists():
-                bd.canvas.delete("all")
-                self.app._art_at(bd.canvas, self.app.root)
+            if bd is None or not bd.winfo_exists():
+                return
+            c, root = bd.canvas, self.app.root
+            c.delete("all")
+            art = self.app._art()
+            if art is None:
+                return
+            bx, by = getattr(self, "_bd_xy", (bd.winfo_rootx(), bd.winfo_rooty()))
+            c.create_image(root.winfo_rootx() + root.winfo_width() // 2 - bx,
+                           root.winfo_rooty() + root.winfo_height() // 2 - by, image=art)
         except (tk.TclError, AttributeError):
             pass
 
@@ -543,7 +657,7 @@ class SettingsDialog(_Dialog):
         content.columnconfigure(0, weight=1)
         self.bind("<MouseWheel>", self._wheel, add="+")
 
-        self.pages, self.nav_rows, self._chev = {}, {}, {}
+        self.pages, self.nav_rows, self._chev, self._nav_of = {}, {}, {}, {}
         self.current_page = None
 
         def tab(title):
@@ -560,6 +674,7 @@ class SettingsDialog(_Dialog):
                 w.bind("<Button-1>", lambda e, t=title: self.show_page(t))
                 w.bind("<Enter>", lambda e, t=title: self._paint_nav(hover=t))
                 w.bind("<Leave>", lambda e: self._paint_nav())
+                self._nav_of[str(w)] = title
             self.pages[title] = f
             self.nav_rows[title] = name
             self._chev[title] = (row, chev)
@@ -849,6 +964,13 @@ class SettingsDialog(_Dialog):
         self.current_page = title
         self._paint_nav()
         self._fit()
+
+    def _hovered(self, w):
+        """See-through hover (from the pointer position): light up the section under the pointer."""
+        t = self._nav_of.get(str(w)) if w is not None else None
+        if t != getattr(self, "_nav_hover", None):
+            self._nav_hover = t
+            self._paint_nav(hover=t)
 
     def _paint_nav(self, hover=None):
         """No boxes: the open section and the pointed-at one are bold white."""

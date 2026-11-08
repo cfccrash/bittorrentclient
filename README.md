@@ -437,3 +437,7 @@ downloaded yet waits for it instead of failing.
 ### 1.9.35
 - **Settings behaves like a drop-down menu:** the rest of the window keeps working while it is open, and clicking anywhere else (the list, the full-screen button, the toolbar ...), pressing F11 or clicking the gear again closes it - the click or key still does its job. Resizing the window closes it too.
 - A box of artwork could be left stuck on the screen after an option window closed; the see-through backgrounds now always clean themselves up.
+
+### 1.9.36
+- Settings (and the other option windows) no longer open as a black panel: the artwork behind them is drawn in the right place and stays between the main window and the panel.
+- Pointing at Settings sections and options now lights them up smoothly, like the left column, and clicking in the empty part of a row selects it instead of closing Settings. (The mouse used to fall through the see-through gaps between the words.)
