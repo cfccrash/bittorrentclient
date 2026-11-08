@@ -92,6 +92,7 @@ class _DrawnButton:
     def __init__(self, app, key, icon, text, command, tip, raised=False):
         self.app, self.key, self.icon, self.text, self.command, self.tip = app, key, icon, text, command, tip
         self.raised, self.enabled, self.P = raised, True, None
+        self.flat = False                # True: never a fill - pointed at, its text turns bold instead
         self.x0 = self.y0 = self.x1 = self.y1 = 0
         self.on_change = None            # called when it needs redrawing (enabled state changed)
 
@@ -121,7 +122,9 @@ class _DrawnButton:
         P = app.P
         x0, y0, x1, y1 = self.x0, self.y0, self.x1, self.y1
         fill = None
-        if not self.enabled:
+        if self.flat:
+            pass
+        elif not self.enabled:
             fill = P["hover"] if self.raised else None
         elif self.raised:
             fill = P["sel"] if down else P["press"] if hover else P["hover"]
@@ -130,6 +133,7 @@ class _DrawnButton:
         if fill:
             cv.create_rectangle(x0, y0, x1, y1, width=0, fill=fill, tags=tags)
         fg = P["fg"] if self.enabled else P["disabled"]
+        bold = self.flat and self.enabled and (hover or down)
         mid = (y0 + y1) // 2
         if not self.text:
             cv.create_text((x0 + x1) // 2, mid, text=self.icon, font=F.icon, fill=fg, tags=tags)
@@ -138,7 +142,7 @@ class _DrawnButton:
         if self.icon:
             cv.create_text(x, mid, anchor="w", text=self.icon, font=F.icon, fill=fg, tags=tags)
             x += int(F.icon.measure(self.icon)) + 6
-        cv.create_text(x, mid, anchor="w", text=self.text, font=F.ui, fill=fg, tags=tags)
+        cv.create_text(x, mid, anchor="w", text=self.text, font=F.bold if bold else F.ui, fill=fg, tags=tags)
 
 
 class _DrawnText:
@@ -663,6 +667,7 @@ class App:
                 ("rss", ui.ICON_RSS, "RSS feeds", self.rss_dialog, "Add torrents automatically from RSS / Atom feeds"),
                 ("library", ui.ICON_LIBRARY, "Library", self.library_dialog, "Everything you can watch, with continue-watching")):
             b = _DrawnButton(self, key, icon if self.F.has_icons else "", text, cmd, tip)
+            b.flat = True                       # the column has no boxes: pointed at, the text turns bold
             self._side_btns.append(b)
             self.btn[key] = b
         for key, text in panels.FILTERS:
@@ -746,11 +751,11 @@ class App:
             for y0, y1, key in self._side_hits:
                 _row, name, count = self.side_rows[key]
                 on = key == self.filter_key
-                if on or key == self._side_hover:
-                    cv.create_rectangle(px(6), y0, w - px(6), y1, width=0, fill=P["sel"] if on else P["hover"])
+                # no boxes: the chosen filter and the pointed-at one are bold white text
+                lit = on or key == self._side_hover
                 mid = (y0 + y1) // 2
                 cv.create_text(px(6) + px(14), mid, anchor="w", text=name.cget("text"),
-                               font=self.F.bold if on else self.F.ui, fill=P["sel_fg"] if on else P["fg"])
+                               font=self.F.bold if lit else self.F.ui, fill=P["fg"])
                 cv.create_text(w - px(6) - px(14), mid, anchor="e", text=count.cget("text"),
                                font=self.F.small, fill=P["muted"])
         except (tk.TclError, TypeError, ValueError, AttributeError, KeyError):

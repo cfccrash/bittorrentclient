@@ -404,3 +404,6 @@ downloaded yet waits for it instead of failing.
 - **One aurora behind the whole window:** the artwork now runs corner to corner as a single picture - behind the title bar, toolbar, left column, torrent list, details tabs and status bar - with no lines or bands between them. The toolbar and status bar are drawn on it too (their buttons and links light up when you point at them).
 - **The aurora artwork now runs under the left column:** the dividing line between the column and the torrent list is gone, and the artwork is centred on the column and list together and stretched wider, so its wings reach out across the column. The column's buttons (Add torrent, Magnet link, Search online, Create torrent, RSS feeds, Library) no longer sit in boxes: they are drawn straight on the artwork and only light up when you point at them.
 - **Round tick boxes:** every tick box in the app (Settings, add / create torrent, RSS, search, the Files dialog and the "Download in order" menu item) is now a circle that lights up green when it is ticked.
+
+### 1.9.28
+- The left column has no boxes at all now: the chosen filter (All, Downloading ...) is shown in bold white text instead of on a blue bar, and pointing at a button or filter makes its text bold instead of drawing a box behind it.
