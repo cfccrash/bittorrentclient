@@ -414,3 +414,7 @@ downloaded yet waits for it instead of failing.
 - Blue buttons (Search, Add, Download selected, Save ...) have white text in the Aurora theme, so they are easier to read.
 - Toolbar: Resume, Pause, Remove, Files and Open folder now start exactly above the list's Name heading.
 - **Full screen:** press F11, or click the new four-corners button left of minimise on the title bar, and the window covers the whole screen, taskbar included. F11, Esc or the same button bring it back to how it was (maximised or not).
+
+### 1.9.30
+- Full screen: Windows can no longer draw its own (old-style) title bar over the Aurora one.
+- Clicking the minimise button no longer risks closing the app with an error.

@@ -79,6 +79,16 @@ def main():
         before = wrect(); app.toggle_fullscreen(); root.update(); time.sleep(0.3); root.update()
         full = wrect()
         assert app.is_fullscreen() and full[2] - full[0] >= root.winfo_screenwidth() - 1, (full, root.winfo_screenwidth())
+        # Windows must never get its own caption back in full screen (it painted a classic title bar over ours)
+        u = ctypes.windll.user32; u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        root.resizable(True, True); root.update(); time.sleep(0.2); root.update()
+        hw = app.chrome.native.hwnd
+        assert u.IsWindow(hw) and not u.GetWindowLongPtrW(hw, -16) & 0x00C00000, hex(u.GetWindowLongPtrW(hw, -16))
+        # minimise through the title bar's button (a synchronous ShowWindow here was a fatal GIL error)
+        x0, y0, x1, y1 = app.chrome._button_boxes()["min"]
+        app.chrome.bar.event_generate("<ButtonPress-1>", x=(x0 + x1) // 2, y=(y0 + y1) // 2)
+        app.chrome.bar.event_generate("<ButtonRelease-1>", x=(x0 + x1) // 2, y=(y0 + y1) // 2)
+        root.update(); time.sleep(0.3); root.update(); root.deiconify(); root.state("normal"); root.update()
         app.toggle_fullscreen(False); root.update(); time.sleep(0.3); root.update()
         assert not app.is_fullscreen() and wrect() == before, (wrect(), before)
     # one picture behind the whole window: title strip, toolbar, column, list and status bar all draw it

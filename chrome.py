@@ -239,7 +239,12 @@ class Chrome:
             pass
         try:
             import ctypes
-            ctypes.windll.user32.ShowWindow(_hwnd(self.win), 6)       # SW_MINIMIZE
+            if self.native is not None and self.native.hwnd:
+                # posted, not ShowWindow: a synchronous call from a Tk callback runs Tk's window procedure (and its
+                # Python bindings) while ctypes has released the GIL - a fatal error in Python 3.14
+                self.native.u.PostMessageW(self.native.hwnd, 0x0112, 0xF020, 0)      # WM_SYSCOMMAND SC_MINIMIZE
+            else:
+                ctypes.windll.user32.ShowWindow(_hwnd(self.win), 6)       # SW_MINIMIZE
         except Exception:
             try:
                 self.win.iconify()
@@ -416,6 +421,7 @@ class NativeFrame:
         self.hwnd = None
         self._proc = self._old = None
         self.nc_hover = False          # pointer over our maximise button (non-client area: Tk does not see it)
+        self._fs_active = False        # full screen: caption style kept off, no non-client painting
         self.zoomed = False
 
     # -- set up
@@ -450,10 +456,8 @@ class NativeFrame:
         u.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
         self._child_old = {}
         win = self.c.win
-        self.hwnd = u.GetParent(win.winfo_id()) or win.winfo_id()
         self._proc = self.WNDPROC(self._wndproc)                      # keep a reference: freed callbacks crash
-        self._old = u.SetWindowLongPtrW(self.hwnd, -4, self.ct.cast(self._proc, ctypes.c_void_p))   # GWLP_WNDPROC
-        u.SetWindowPos(self.hwnd, None, 0, 0, 0, 0, 0x0027)            # SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER
+        self._hook(u.GetParent(win.winfo_id()) or win.winfo_id())
         # the strip canvas and the toplevel's client window sit between the pointer and the frame
         self._pass_through([h for h in (self.c.bar.winfo_id(), win.winfo_id()) if h and h != self.hwnd])
         try:
@@ -463,6 +467,26 @@ class NativeFrame:
         except Exception:
             pass
         self._poll()
+
+    def _hook(self, hwnd):
+        """Subclass Tk's wrapper window `hwnd` (our _wndproc in front of Tk's)."""
+        self.hwnd = hwnd
+        self._old = self.u.SetWindowLongPtrW(hwnd, -4, self.ct.cast(self._proc, self.ct.c_void_p))   # GWLP_WNDPROC
+        self.u.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0027)            # SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER
+
+    def _check_wrapper(self):
+        """Some Tk calls (wm resizable, ...) destroy the wrapper window and make a new one, with a standard caption
+        and without our window procedure. Hook the new one (and keep full screen if it was on)."""
+        win = self.c.win
+        cur = self.u.GetParent(win.winfo_id()) or win.winfo_id()
+        if cur and cur != self.hwnd:
+            self._hook(cur)
+            self._corners(1 if self.c.full else 2)
+            if self._fs_active:
+                keep = (self._fs_rect, self._fs_zoomed)       # where to go back to stays the same
+                self._fs_active = False
+                self.fill_screen(True)
+                self._fs_rect, self._fs_zoomed = keep
 
     def fill_screen(self, on):
         """Cover the monitor the window is on, taskbar included (Windows hides the taskbar for a window that
@@ -487,9 +511,11 @@ class NativeFrame:
                 m = mi.rcMonitor
                 self._fs_style = u.GetWindowLongPtrW(self.hwnd, -16)                 # GWL_STYLE
                 u.SetWindowLongPtrW(self.hwnd, -16, self._fs_style & ~(0x00C00000 | 0x00040000))  # no CAPTION/THICKFRAME
+                self._fs_active = True
                 self._corners(1)                                                    # square corners
                 u.SetWindowPos(self.hwnd, None, m.left, m.top, m.right - m.left, m.bottom - m.top, 0x0020 | 0x0040)
             else:
+                self._fs_active = False
                 u.SetWindowLongPtrW(self.hwnd, -16, self._fs_style)
                 self._corners(2)
                 left, top, right, bottom = self._fs_rect
@@ -573,6 +599,7 @@ class NativeFrame:
     def _poll(self):
         c = self.c
         try:
+            self._check_wrapper()
             z = bool(self.u.IsZoomed(self.hwnd))
             hov = "max" if self.nc_hover else (c.hover if c.hover != "max" else None)
             if z != c.maxed or hov != c.hover:
@@ -599,6 +626,15 @@ class NativeFrame:
                 return 0
             if msg == 0x0084:                                          # WM_NCHITTEST
                 return self._hit(hwnd, lp)
+            if self._fs_active:
+                if msg == 0x0085:                                      # WM_NCPAINT: nothing to paint
+                    return 0
+                if msg == 0x0086:                                      # WM_NCACTIVATE: no caption repaint
+                    return self.u.CallWindowProcW(self._old, hwnd, msg, wp, -1)
+                if msg == 0x007C and (wp & 0xFFFFFFFF) == 0xFFFFFFF0:  # WM_STYLECHANGING, GWL_STYLE
+                    ss = self.ct.cast(lp, self.ct.POINTER(self.wt.DWORD * 2)).contents
+                    ss[1] &= ~(0x00C00000 | 0x00040000)                # keep CAPTION / THICKFRAME off
+                    return 0
             if msg == 0x0112 and (wp & 0xFFF0) == 0xF100 and lp == 0:  # WM_SYSCOMMAND SC_KEYMENU from Alt alone:
                 return 0         # the (hidden) system menu would take the keyboard and the app would seem frozen
                                  # (Alt+Space, lp == ' ', still opens it)
