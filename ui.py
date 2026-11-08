@@ -19,7 +19,7 @@ LIGHT = dict(
 DARK = dict(
     bg="#04060E", surface="#080A19", surface2="#060813", border="#16203C",
     fg="#E4ECFF", muted="#7C8AB2", disabled="#434C6B",
-    accent="#3D8BFF", accent_hover="#6AA5FF", accent_fg="#04101F",
+    accent="#3D8BFF", accent_hover="#2E74E6", accent_fg="#FFFFFF",
     hover="#0F1830", press="#162448", sel="#112B58", sel_fg="#FFFFFF",
     trough="#0C1530", scroll="#222F55", scroll_hover="#394C80",
     good="#5FD39A", warn="#F5C451", bad="#FF7B86", glow="#7A5CFF",

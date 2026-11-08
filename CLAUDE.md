@@ -40,6 +40,8 @@ Current version is in `version.py`; release notes are the sections at the bottom
   Real pointers hit the innermost child window first: the strip canvas + toplevel client answer HTTRANSPARENT over the max
   button (else no Snap Layouts). Moving/sizing: PostMessage WM_SYSCOMMAND SC_MOVE|HTCAPTION / SC_SIZE|edge after ReleaseCapture,
   only past SM_CXDRAG (a SendMessage'd WM_NCLBUTTONDOWN from a Tk handler never ends; starting at press eats double-clicks).
+  Full screen (`Chrome.fill_screen` / `NativeFrame.fill_screen`, F11): drop WS_CAPTION|WS_THICKFRAME, square DWM corners,
+  SetWindowPos to rcMonitor - Windows then hides the taskbar; restore style + saved rect (+ re-maximise).
   Block SC_KEYMENU with lParam 0 (lone Alt) or the hidden system menu grabs the keyboard. Test with real input from a separate
   process (mouse_event absolute): SetCursorPos/mouse_event from the app's own process stall during a move loop.
 - Frameless windows (`overrideredirect`) are not stacked by Windows like owned dialogs: modal dialogs must stay `-topmost`, and must never `wait_visibility()`;

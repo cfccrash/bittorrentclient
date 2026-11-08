@@ -65,7 +65,22 @@ def main():
     # toolbar: Exit / Restart / Settings sit over the column, the torrent actions start where the list starts
     app._draw_toolbar(); colw = app._side.winfo_width()
     assert all(0 <= app.btn[k].x0 < app.btn[k].x1 <= colw for k in ("exit", "restart", "settings")), colw
-    assert app.btn["resume"].x0 >= colw and app.btn["folder"].x1 < app.toolbar.winfo_width()
+    assert app.btn["resume"].x0 + 12 >= colw and app.btn["folder"].x1 < app.toolbar.winfo_width(),         (app.btn["resume"].x0, colw, app.btn["folder"].x1, app.toolbar.winfo_width())
+    name_x = app.tree.winfo_rootx() - app.toolbar.winfo_rootx() + app.tree.inset + 8
+    assert abs(app.btn["resume"].x0 + (12 if app.btn["resume"].icon else 14) - name_x) <= 1, (app.btn["resume"].x0, name_x)
+    # full screen (F11 / the strip's corner button): covers the monitor, then back to the same place
+    assert app.chrome.buttons[0] == "full"
+    if app.chrome.native:
+        import ctypes
+        from ctypes import wintypes
+        def wrect():
+            r = wintypes.RECT(); ctypes.windll.user32.GetWindowRect(app.chrome.native.hwnd, ctypes.byref(r))
+            return (r.left, r.top, r.right, r.bottom)
+        before = wrect(); app.toggle_fullscreen(); root.update(); time.sleep(0.3); root.update()
+        full = wrect()
+        assert app.is_fullscreen() and full[2] - full[0] >= root.winfo_screenwidth() - 1, (full, root.winfo_screenwidth())
+        app.toggle_fullscreen(False); root.update(); time.sleep(0.3); root.update()
+        assert not app.is_fullscreen() and wrect() == before, (wrect(), before)
     # one picture behind the whole window: title strip, toolbar, column, list and status bar all draw it
     for c in (app.chrome.bar, app.toolbar, app.side_cv, app.statusbar):
         assert any(c.type(i) == "image" for i in c.find_all()), c

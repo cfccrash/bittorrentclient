@@ -56,6 +56,7 @@ class Chrome:
         self.maxed = False
         self.normal_geo = None
         self.full = False
+        self.on_full = None            # optional fn(on): told when fill_screen switches
         self.hover = None
         self.title_text = title
         self.h = px(38 if main else 34)
@@ -154,6 +155,16 @@ class Chrome:
                     c.create_rectangle(cx - s, cy - s + 2, cx + s - 2, cy + s, outline=col, width=lw, fill=c["bg"] if not hot else P["hover"])
                 else:
                     c.create_rectangle(cx - s, cy - s, cx + s, cy + s, outline=col, width=lw)
+            elif name == "full":                 # four corners: pointing out = go full screen, in = leave it
+                k = max(2, s // 2 + 1)
+                for sx in (-1, 1):
+                    for sy in (-1, 1):
+                        if self.full:
+                            x, y = cx + sx * (s - k), cy + sy * (s - k)
+                            c.create_line(x + sx * k, y, x, y, x, y + sy * k, fill=col, width=lw)
+                        else:
+                            x, y = cx + sx * s, cy + sy * s
+                            c.create_line(x, y - sy * k, x, y, x - sx * k, y, fill=col, width=lw)
             elif name == "close":
                 c.create_line(cx - s, cy - s, cx + s + 1, cy + s + 1, fill=col, width=lw)
                 c.create_line(cx - s, cy + s, cx + s + 1, cy - s - 1, fill=col, width=lw)
@@ -204,7 +215,8 @@ class Chrome:
     def _release(self, e):
         info, self._press_info = self._press_info, None
         if info and info[0] == "btn" and self._which(e.x, e.y) == info[1]:
-            {"min": self.minimize, "max": self.toggle_max, "close": self.close}[info[1]]()
+            {"min": self.minimize, "max": self.toggle_max, "close": self.close,
+             "full": lambda: self.fill_screen(not self.full)}[info[1]]()
 
     def _double(self, e):
         if "max" in self.buttons and not self._which(e.x, e.y):
@@ -262,6 +274,22 @@ class Chrome:
             self.win.geometry(self.normal_geo)
         self._grips_visible(True)
         self.draw()
+
+    def fill_screen(self, on):
+        """Main window full screen: it covers the whole monitor, taskbar included. The strip stays, so its button
+        (or F11 / Esc in the app) brings the window back."""
+        if on == self.full:
+            return
+        if self.native is not None and self.native.fill_screen(on):
+            self.full = on
+            self._grips_visible(not on and not self.maxed)
+            self.draw()
+            if self.on_full:
+                self.on_full(on)
+            return
+        self.fullscreen(on)
+        if self.on_full:
+            self.on_full(on)
 
     def fullscreen(self, on):
         """Whole-screen mode for a video window: no strip, no grips."""
@@ -416,6 +444,10 @@ class NativeFrame:
         u.ReleaseCapture.argtypes = []
         u.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         u.GetDoubleClickTime.restype = wintypes.UINT
+        u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        u.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.MonitorFromWindow.restype = wintypes.HANDLE
+        u.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
         self._child_old = {}
         win = self.c.win
         self.hwnd = u.GetParent(win.winfo_id()) or win.winfo_id()
@@ -431,6 +463,49 @@ class NativeFrame:
         except Exception:
             pass
         self._poll()
+
+    def fill_screen(self, on):
+        """Cover the monitor the window is on, taskbar included (Windows hides the taskbar for a window that
+        covers the whole monitor and has no caption or sizing frame). False if it could not be done."""
+        if not self.hwnd:
+            return False
+        ct, wt, u = self.ct, self.wt, self.u
+        try:
+            if on:
+                self._fs_zoomed = bool(u.IsZoomed(self.hwnd))
+                if self._fs_zoomed:
+                    u.ShowWindow(self.hwnd, 9)                          # SW_RESTORE: keep the normal size to go back to
+                r = wt.RECT()
+                u.GetWindowRect(self.hwnd, ct.byref(r))
+                self._fs_rect = (r.left, r.top, r.right, r.bottom)
+
+                class MONITORINFO(ct.Structure):
+                    _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
+                mi = MONITORINFO()
+                mi.cbSize = ct.sizeof(MONITORINFO)
+                u.GetMonitorInfoW(u.MonitorFromWindow(self.hwnd, 2), ct.byref(mi))     # MONITOR_DEFAULTTONEAREST
+                m = mi.rcMonitor
+                self._fs_style = u.GetWindowLongPtrW(self.hwnd, -16)                 # GWL_STYLE
+                u.SetWindowLongPtrW(self.hwnd, -16, self._fs_style & ~(0x00C00000 | 0x00040000))  # no CAPTION/THICKFRAME
+                self._corners(1)                                                    # square corners
+                u.SetWindowPos(self.hwnd, None, m.left, m.top, m.right - m.left, m.bottom - m.top, 0x0020 | 0x0040)
+            else:
+                u.SetWindowLongPtrW(self.hwnd, -16, self._fs_style)
+                self._corners(2)
+                left, top, right, bottom = self._fs_rect
+                u.SetWindowPos(self.hwnd, None, left, top, right - left, bottom - top, 0x0020 | 0x0004 | 0x0040)
+                if self._fs_zoomed:
+                    u.ShowWindow(self.hwnd, 3)                          # it was maximised before
+            return True
+        except Exception:
+            return False
+
+    def _corners(self, pref):
+        try:
+            v = self.ct.c_int(pref)
+            self.ct.windll.dwmapi.DwmSetWindowAttribute(self.hwnd, 33, self.ct.byref(v), self.ct.sizeof(v))
+        except Exception:
+            pass
 
     def show(self, cmd):
         if self.hwnd:
@@ -502,7 +577,7 @@ class NativeFrame:
             hov = "max" if self.nc_hover else (c.hover if c.hover != "max" else None)
             if z != c.maxed or hov != c.hover:
                 if z != c.maxed:
-                    c._grips_visible(not z)                            # no resizing a maximised window
+                    c._grips_visible(not z and not c.full)             # no resizing a maximised / full-screen window
                 c.maxed, c.hover = z, hov
                 c.draw()
             c.win.after(60, self._poll)
@@ -543,7 +618,7 @@ class NativeFrame:
         x, y = ct.c_short(lp & 0xFFFF).value, ct.c_short((lp >> 16) & 0xFFFF).value
         wr = wt.RECT(); u.GetWindowRect(hwnd, ct.byref(wr))
         zoomed = u.IsZoomed(hwnd)
-        if not zoomed:                                                 # resize from the edges (and corners)
+        if not zoomed and not self.c.full:                             # resize from the edges (and corners)
             b = max(4, self.c.px(6))
             col = 0 if x < wr.left + b else 2 if x >= wr.right - b else 1
             row = 0 if y < wr.top + b else 2 if y >= wr.bottom - b else 1

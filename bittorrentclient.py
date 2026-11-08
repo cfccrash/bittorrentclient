@@ -337,7 +337,8 @@ class App:
         dialogs.install_messageboxes(self)
         root.bind("<Unmap>", lambda e: ui.Tooltip.hide_all() if e.widget is root else None, add="+")
         root.bind("<FocusOut>", lambda e: ui.Tooltip.hide_all() if e.widget is root else None, add="+")
-        self.chrome = chrome.attach(root, self.P, self.px, APP, main=True, font=self.F.bold, snap=True) \
+        self.chrome = chrome.attach(root, self.P, self.px, APP, main=True, font=self.F.bold, snap=True,
+                                    buttons=("full", "min", "max", "close")) \
             if chrome.enabled(self.cfg) else None       # snap: real Windows frame behind the Aurora strip (Snap Layouts etc.)
         if self.chrome is not None:
             self.chrome.art = lambda c: self._art_at(c, self.root)   # the title strip shows its slice of the artwork
@@ -362,6 +363,9 @@ class App:
         self.tree.bind("<Delete>", lambda e: self.remove())
         self.tree.bind("<space>", self._on_space)
         root.protocol("WM_DELETE_WINDOW", self.close)
+        root.bind("<F11>", lambda e: self.toggle_fullscreen())
+        root.bind("<Escape>", lambda e: self.toggle_fullscreen(False) if self.is_fullscreen() and
+                  e.widget is not getattr(self, "search_entry", None) else None, add="+")
         self.apply_theme()
 
         self.mgr = Manager(self.cfg["port"], encryption=self.cfg["encryption"],
@@ -561,13 +565,13 @@ class App:
             self.btn[key] = b
             self._tb_items.append(b)
 
-        # over the column: exit / restart (icon only), and Settings as a raised button
+        # over the column: exit / restart / settings (icons only, no boxes)
         add("exit", ui.ICON_EXIT, "" if self.F.has_icons else "Exit", self.exit_app,
             "Exit Bit Torrent Client completely (the window's close button only hides it to the tray)", left=True)
         add("restart", ui.ICON_RESTART, "" if self.F.has_icons else "Restart", self.restart, "Restart Bit Torrent Client",
             left=True)
         add("settings", ui.ICON_SETTINGS, "" if self.F.has_icons else "Settings", self.settings_dialog,
-            "Settings: speed limits, encryption, network, theme", raised=True, left=True)
+            "Settings: speed limits, encryption, network, theme", left=True)
         # over the list: actions on the selected torrents
         add("resume", ui.ICON_PLAY, "Resume", self.resume, "Resume the selected torrents")
         add("pause", ui.ICON_PAUSE, "Pause", self.pause, "Pause the selected torrents  (Space)")
@@ -615,9 +619,14 @@ class App:
                 b.x0 = int(slot * i + (slot - bw) / 2)
                 b.x1, b.y0, b.y1 = b.x0 + bw, top, top + bh
             x = colw + self.px(8)
-            for b in (b for b in self._tb_items if not b.left):
-                if b.key == "files":                          # a short divider between the two groups
-                    cv.create_line(x + 6, top + 6, x + 6, top + bh - 6, fill=P["border"], tags="deco")
+            acts = [b for b in self._tb_items if not b.left]
+            tree = getattr(self, "tree", None)
+            if acts and tree is not None and tree.winfo_width() > 1:
+                # the first action's icon starts exactly above the list's "Name" heading
+                name_x = tree.winfo_rootx() - cv.winfo_rootx() + int(getattr(tree, "inset", 0)) + 8
+                x = name_x - (12 if acts[0].icon else 14)
+            for b in acts:
+                if b.key == "files":                          # a little gap (no line) between the two groups
                     x += 17
                 b.x0, b.y0, b.x1, b.y1 = x, top, x + b.need(), top + bh
                 x = b.x1 + 4
@@ -865,6 +874,7 @@ class App:
         self.tree.pack(side="left", fill="both", expand=True)
         self.sb.pack(side="right", fill="y")
         self.tree.bind("<Configure>", lambda e: self._on_resize(), add="+")  # re-equalise the columns
+        self.tree.bind("<Configure>", lambda e: self._later("toolbar", self._draw_toolbar), add="+")  # actions over "Name"
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_select())
         self.tree.bind("<Button-3>", self._popup)
 
@@ -2775,6 +2785,25 @@ class App:
         self._empty_shown = show
         self._layout_art()
 
+    def is_fullscreen(self):
+        try:
+            if self.chrome is not None:
+                return bool(self.chrome.full)
+            return bool(int(self.root.attributes("-fullscreen")))
+        except (tk.TclError, TypeError, ValueError):
+            return False
+
+    def toggle_fullscreen(self, on=None):
+        """Full screen (F11, or the title bar's corner button): the window covers the whole monitor, taskbar
+        included. F11 again, Esc or the button bring it back to how it was."""
+        on = (not self.is_fullscreen()) if on is None else bool(on)
+        if on == self.is_fullscreen():
+            return
+        if self.chrome is not None:
+            self.chrome.fill_screen(on)
+        else:
+            self.root.attributes("-fullscreen", on)
+
     def _art_moved(self):
         """The window changed size: the picture is centred on it, so every part redraws its slice."""
         for fn in (self._draw_toolbar, self._draw_status, self._draw_sidebar, self.tree.redraw,
@@ -2792,12 +2821,14 @@ class App:
         self._art_at(c, self.root)
 
     def _layout_art(self):
-        """With no rows shown, the empty-state canvas (same artwork, plus the hint) covers the list."""
+        """With no rows shown, the empty-state canvas (same artwork, plus the hint) covers the list's rows -
+        not its heading row, which stays visible (Name, Size, Progress ...)."""
         try:
             if self.tree.get_children():
                 self.empty.place_forget(); return
-            self.empty.place(x=self.tree.winfo_x(), y=self.tree.winfo_y(), width=self.tree.winfo_width(),
-                             height=self.tree.winfo_height())
+            head = int(getattr(self.tree, "head_height", 0) or 0)
+            self.empty.place(x=self.tree.winfo_x(), y=self.tree.winfo_y() + head, width=self.tree.winfo_width(),
+                             height=max(1, self.tree.winfo_height() - head))
             try:
                 tk.Misc.tkraise(self.empty)           # (Canvas.lift would raise a canvas item instead)
             except AttributeError:
