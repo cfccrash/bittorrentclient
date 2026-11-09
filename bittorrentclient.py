@@ -1438,7 +1438,8 @@ class App:
                 w.destroy()
             panel = player_mod.PlayerPanel(self.player_tab, self.root, queue, 0, self._session(queue, lib), lib,
                                            on_fullscreen=lambda on=None: self.popout_player(),
-                                           on_popout=self.popout_player, key_widget=self.player_tab, popout_label="Detach")
+                                           on_popout=self.popout_player, key_widget=self.player_tab, popout_label="Detach",
+                                           on_mini=lambda: self.popout_player(mini=True))
             if panel.error:
                 messagebox.showerror(APP, panel.error, parent=self.root)
                 return
@@ -1447,8 +1448,9 @@ class App:
         self._tab = "Player"
         self.root.update_idletasks()
 
-    def popout_player(self):
-        """Move the Player tab's video into a window of its own (continues where it was)."""
+    def popout_player(self, mini=False):
+        """Move the Player tab's video into a window of its own (continues where it was); mini: the small
+        always-on-top player in the corner."""
         import player as player_mod
         panel = getattr(self, "_panel", None)
         if not panel or not panel.mpv:
@@ -1458,7 +1460,8 @@ class App:
         panel.close()
         self._panel = None
         self._player_idle("The player is in its own window. Press Attach there to bring it back here.")
-        player_mod.PlayerWindow(self.root, queue=queue, index=idx, session=sess, lib=lib, on_dock=self.dock_player)
+        player_mod.PlayerWindow(self.root, queue=queue, index=idx, session=sess, lib=lib, on_dock=self.dock_player,
+                                mini=mini)
 
     def dock_player(self, win):
         """Bring a detached player window back into the Player tab, continuing where it was."""

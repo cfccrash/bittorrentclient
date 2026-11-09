@@ -59,6 +59,11 @@ Current version is in `version.py`; release notes are the sections at the bottom
   Python bindings while ctypes has released the GIL -> fatal 'PyEval_RestoreThread'. PostMessage instead.
   Block SC_KEYMENU with lParam 0 (lone Alt) or the hidden system menu grabs the keyboard. Test with real input from a separate
   process (mouse_event absolute): SetCursorPos/mouse_event from the app's own process stall during a move loop.
+- Player controls (`PlayerPanel`): a borderless, alpha 0.9, WS_EX_NOACTIVATE Toplevel (`osd`) over the bottom of mpv's
+  native video window, drawn on a canvas; `_osd_tick` (120 ms, pointer polling - mpv's window eats Tk motion) places,
+  shows and hides it; topmost mirrors the window's (mini player). mpvlib sets keep-open: the end of a file is
+  'eof-reached', there is no end-file event. Making a window topmost right after geometry() undoes the move
+  (update_idletasks first). test_player makes its clips with libmpv's encoder when ffmpeg is missing.
 - Frameless windows (`overrideredirect`) are not stacked by Windows like owned dialogs: modal dialogs must stay `-topmost`, and must never `wait_visibility()`;
   otherwise a dialog can hide behind another window while holding the grab = "app froze". See `_Dialog.show`.
 - Tk `Canvas.lift/tkraise` raise canvas *items*; use `tk.Misc.tkraise(widget)`.

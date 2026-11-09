@@ -6,6 +6,7 @@ for "Play": it can show which parts of a streaming file are already downloaded o
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import threading
 import tkinter as tk
 import urllib.request
 from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
 
 import chrome
 import mpvlib
@@ -28,7 +30,80 @@ SPEEDS = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
 ASPECTS = (("Original", "-1", 0, True), ("16:9", "16:9", 0, True), ("4:3", "4:3", 0, True), ("21:9", "21:9", 0, True),
            ("2.35:1", "2.35:1", 0, True), ("1:1", "1:1", 0, True), ("Fill (crop edges)", "-1", 1, True),
            ("Stretch to window", "-1", 0, False))
-BG, FG, ACC, BUF = "#101216", "#e6e8ec", "#4c9aff", "#3a4150"
+BG, FG, ACC, BUF = "#101216", "#e6e8ec", "#4c9aff", "#6b7488"
+OSD_BG, TRACK, MUTED = "#0b0d12", "#2a2f3a", "#9aa3b2"
+BAR_H = 84                     # height of the control strip (96 dpi pixels)
+UP_NEXT_S = 15                 # the "Up next" card shows this many seconds before the end
+ICON_FONTS = ("Segoe Fluent Icons", "Segoe MDL2 Assets")
+ICON = dict(play="\uE768", pause="\uE769", stop="\uE71A", prev="\uE892", next="\uE893", back="\uED3C",
+            fwd="\uED3D", vol="\uE767", mute="\uE74F", full="\uE740", unfull="\uE73F", subs="\uED1E",
+            chapters="\uE8FD", aspect="\uE799", camera="\uE722", mini="\uEE49", detach="\uE8A7", attach="\uEE47")
+PREFS_FILE = "track_prefs.json"
+
+
+def _mix(a, b, t):
+    """Colour between a and b (t = 0..1 towards b)."""
+    a, b = [int(a[i:i + 2], 16) for i in (1, 3, 5)], [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    t = max(0.0, min(1.0, t))
+    return "#%02x%02x%02x" % tuple(int(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def _elide(text, font, room):
+    if room <= 0 or font.measure(text) <= room:
+        return text
+    while text and font.measure(text + "\u2026") > room:
+        text = text[:-1]
+    return text + "\u2026"
+
+
+class _Volume:
+    """The volume (0-130) the drawn slider shows; set() also changes mpv's volume."""
+
+    def __init__(self, panel):
+        self.p, self.v = panel, 80
+
+    def get(self):
+        return self.v
+
+    def set(self, v, push=True):
+        self.v = max(0, min(130, int(round(float(v)))))
+        if push:
+            self.p._vol(self.v)
+        self.p._redraw()
+
+    def configure(self, **kw):
+        pass
+
+
+def series_key(entry):
+    """What 'the same series' means for remembering audio / subtitle choices: the show name before SxxEyy in the
+    title, else the torrent (all files of one torrent)."""
+    t = (entry or {}).get("title", "")
+    m = re.match(r"(.+?)[\s._\-\[(]*[Ss]\d{1,2}[\s._-]*[Ee]\d{1,3}", t)
+    if m:
+        return "s:" + re.sub(r"[\s._-]+", " ", m.group(1)).strip().lower()
+    k = (entry or {}).get("key", "")
+    return ("t:" + k.split(":")[0]) if k else None
+
+
+def load_prefs(state_dir):
+    try:
+        with open(os.path.join(state_dir, PREFS_FILE), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def save_prefs(state_dir, prefs):
+    if not state_dir:
+        return
+    try:
+        p = os.path.join(state_dir, PREFS_FILE)
+        with open(p + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(prefs, f)
+        os.replace(p + ".tmp", p)
+    except OSError:
+        pass
 
 
 def fmt_time(s):
@@ -100,29 +175,23 @@ def install_vlc():
                       "--accept-package-agreements"], creationflags=0x00000010)      # CREATE_NEW_CONSOLE
 
 
-HELP = """Space / click      Pause / play
+HELP = """Space, K / click   Pause / play
 Left, Right        Back / forward 5 s   (Shift: 30 s)
-Up, Down           Volume
+J, L               Back / forward 10 s
+0 - 9              Jump to 0 % - 90 % of the video
+Up, Down / wheel   Volume
 PageUp, PageDown   Previous / next chapter
 N, P               Next / previous file in the queue
 A                  Next aspect ratio (or the Aspect menu)
 S                  Stop (Play starts it again)
 M                  Mute
 Z, X               Subtitle delay -/+ 0.1 s
+Shift+Z, Shift+X   Audio delay -/+ 0.1 s (sound out of sync)
 , and .            Subtitle size smaller / larger
+Shift+S            Save a picture of the frame (Pictures)
 F, Esc             Full screen / leave   (double-click too)
 Ctrl+O             Open a file or link
 ?, F1              This help"""
-
-
-def _btn(parent, text, cmd):
-    return tk.Button(parent, text=text, command=cmd, bg="#1d2129", fg=FG, activebackground="#2b3140",
-                     activeforeground=FG, relief="flat", padx=10, pady=3, bd=0)
-
-
-def _mb(parent, text):
-    return tk.Menubutton(parent, text=text, bg="#1d2129", fg=FG, activebackground="#2b3140", activeforeground=FG,
-                         relief="flat", padx=10, pady=3, bd=0)
 
 
 class PlayerPanel:
@@ -135,8 +204,13 @@ class PlayerPanel:
     stopped = False
 
     def __init__(self, parent, top, queue=(), index=0, session=None, lib=None, options=None, on_fullscreen=None,
-                 on_popout=None, on_end=None, key_widget=None, popout_label="Detach"):
+                 on_popout=None, on_end=None, key_widget=None, popout_label="Detach", on_mini=None,
+                 mini_tip="Mini player (stays on top in a corner)", is_full=None):
         self.popout_label = popout_label
+        self.on_mini, self.mini_tip, self.is_full = on_mini, mini_tip, is_full
+        self.next_cancelled = False
+        self._last_pos = 0.0
+        self._eof_done = False
         self.parent, self.top = parent, top
         self.sess = session or {}
         self.queue, self.index = list(queue), index
@@ -180,77 +254,448 @@ class PlayerPanel:
                  ("LEFT", "seek -5"), ("RIGHT", "seek 5"), ("Shift+LEFT", "seek -30"), ("Shift+RIGHT", "seek 30"),
                  ("UP", "add volume 5"), ("DOWN", "add volume -5"), ("WHEEL_UP", "add volume 5"), ("WHEEL_DOWN", "add volume -5"),
                  ("PGUP", "add chapter -1"), ("PGDWN", "add chapter 1"), ("m", "cycle mute"), ("z", "add sub-delay -0.1"),
-                 ("x", "add sub-delay 0.1"), ("a", "script-message tk-aspect"), ("s", "script-message tk-stop"), (",", "add sub-scale -0.1"), (".", "add sub-scale 0.1")]
+                 ("x", "add sub-delay 0.1"), ("a", "script-message tk-aspect"), ("s", "script-message tk-stop"), (",", "add sub-scale -0.1"), (".", "add sub-scale 0.1"),
+                 ("j", "seek -10"), ("k", "cycle pause"), ("l", "seek 10"), ("S", "script-message tk-shot"),
+                 ("Z", "add audio-delay -0.1"), ("X", "add audio-delay 0.1")] + \
+                [(str(n), "seek %d absolute-percent" % (n * 10)) for n in range(10)]
         for key, cmd in binds:
             try:
                 self.mpv.command("keybind", key, cmd)
             except mpvlib.MpvError:
                 pass
         self.bind_keys(key_widget or self.top)
+        self.bind_keys(self.osd)
         if self.queue:
             self.play_index(self.index)
         self._tick()
         threading.Thread(target=self._map_loop, daemon=True).start()
 
-    # ---- layout
+    # ---- layout: the controls float over the bottom of the video ------------------------------------------------
+    def px(self, n):
+        return int(round(n * self.scale))
+
     def _build(self):
         p = self.parent
+        try:
+            self.scale = max(1.0, p.winfo_fpixels("1i") / 96.0)
+        except tk.TclError:
+            self.scale = 1.0
         self.video = tk.Frame(p, bg="black", highlightthickness=0)
         self.video.pack(fill="both", expand=True)
-        bar = tk.Frame(p, bg=BG)
-        bar.pack(fill="x", side="bottom")
-        self.bar = bar
-        self.seek = tk.Canvas(bar, height=22, bg=BG, highlightthickness=0, cursor="hand2")
-        self.seek.pack(fill="x", padx=10, pady=(8, 2))
-        self.seek.bind("<Button-1>", self._seek_press)
-        self.seek.bind("<B1-Motion>", self._seek_drag)
-        self.seek.bind("<ButtonRelease-1>", lambda e: setattr(self, "seeking", False))
-        self.seek.bind("<Motion>", self._seek_hover)
-        self.seek.bind("<Leave>", lambda e: (setattr(self, "hover_x", None), self._hide_thumb(), self._draw_seek()))
-        self.seek.bind("<Configure>", lambda e: self._draw_seek())
-        row = tk.Frame(bar, bg=BG)
-        row.pack(fill="x", padx=10, pady=(0, 8))
-        self.btn_play = _btn(row, "Play", self.toggle)
-        self.btn_play.pack(side="left")
-        _btn(row, "Stop", self.stop).pack(side="left", padx=(6, 0))
-        _btn(row, "|<", lambda: self.step(-1)).pack(side="left", padx=(6, 0))
-        _btn(row, ">|", lambda: self.step(1)).pack(side="left", padx=(6, 0))
-        _btn(row, "-10s", lambda: self.rel(-10)).pack(side="left", padx=(6, 0))
-        _btn(row, "+10s", lambda: self.rel(10)).pack(side="left", padx=(6, 0))
-        self.time = tk.StringVar(value="0:00 / 0:00")
-        tk.Label(row, textvariable=self.time, bg=BG, fg=FG, width=14).pack(side="left", padx=10)
-        self.status = tk.StringVar()
-        tk.Label(row, textvariable=self.status, bg=BG, fg="#9aa3b2", anchor="w").pack(side="left", fill="x", expand=True)
-        _btn(row, "Open…", self.open_dialog).pack(side="right")
-        _btn(row, "Full", lambda: self.fullscreen()).pack(side="right", padx=(0, 6))
-        if self.on_popout:
-            _btn(row, self.popout_label, self.on_popout).pack(side="right", padx=(0, 6))
-        self.mb_aspect = _mb(row, "Aspect")
-        self.mb_aspect.pack(side="right", padx=(0, 6))
-        am = tk.Menu(self.mb_aspect, tearoff=0)
+        families = set(tkfont.families(p))
+        self.f_icon = tkfont.Font(p, family=next((f for f in ICON_FONTS if f in families), "Segoe UI Symbol"), size=13)
+        self.f_big = tkfont.Font(p, family=self.f_icon.actual("family"), size=17)
+        self.f_ui = tkfont.Font(p, family="Segoe UI", size=10)
+        self.f_bold = tkfont.Font(p, family="Segoe UI", size=10, weight="bold")
+        self.f_small = tkfont.Font(p, family="Segoe UI", size=8)
+        # A borderless strip above mpv's native video window, slightly see-through: Tk widgets cannot sit *on* the
+        # video, but a window of its own can. It never takes the keyboard focus (WS_EX_NOACTIVATE).
+        osd = self.osd = tk.Toplevel(p)
+        osd.withdraw()
+        osd.overrideredirect(True)
+        try:
+            osd.transient(p.winfo_toplevel())
+            osd.attributes("-alpha", 0.9)
+        except tk.TclError:
+            pass
+        self.cv = tk.Canvas(osd, bg=OSD_BG, highlightthickness=0, bd=0, height=self.px(BAR_H))
+        self.cv.pack(fill="both", expand=True)
+        self.seek = self.cv                       # (older name: the seek bar is the top row of this canvas)
+        self.bar = osd
+        self._items, self._hot, self._down, self._drag = [], None, None, None
+        self._osd_on, self._last_move, self._last_ptr = False, time.time(), None
+        self.status, self.time = tk.StringVar(), tk.StringVar(value="0:00 / 0:00")
+        self.status.trace_add("write", lambda *a: self._redraw())
+        self.vol = _Volume(self)
+        self._speed_label, self._aspect_name = "1x", "Original"
         self.aspect_i = tk.IntVar(value=0)
-        for i, a in enumerate(ASPECTS):
-            am.add_radiobutton(label=a[0], variable=self.aspect_i, value=i, command=lambda i=i: self.set_aspect(i))
-        self.mb_aspect["menu"] = am
-        self.mb_tracks = _mb(row, "Tracks")
-        self.mb_tracks.pack(side="right", padx=(0, 6))
-        self.tracks_menu = tk.Menu(self.mb_tracks, tearoff=0, postcommand=self._fill_tracks)
-        self.mb_tracks["menu"] = self.tracks_menu
-        self.mb_chap = _mb(row, "Chapters")
-        self.mb_chap.pack(side="right", padx=(0, 6))
-        self.chap_menu = tk.Menu(self.mb_chap, tearoff=0, postcommand=self._fill_chapters)
-        self.mb_chap["menu"] = self.chap_menu
-        self.mb_speed = _mb(row, "1x")
-        self.mb_speed.pack(side="right", padx=(0, 6))
-        sm = tk.Menu(self.mb_speed, tearoff=0)
+        self.night = tk.BooleanVar(value=False)
+        self.tracks_menu = tk.Menu(self.cv, tearoff=0)
+        self.chap_menu = tk.Menu(self.cv, tearoff=0)
+        self.speed_menu = tk.Menu(self.cv, tearoff=0)
         for sp in SPEEDS:
-            sm.add_command(label="%gx" % sp, command=lambda v=sp: self.set_speed(v))
-        self.mb_speed["menu"] = sm
-        self.vol = tk.Scale(row, from_=0, to=130, orient="horizontal", length=90, showvalue=False, bg=BG, fg=FG,
-                            troughcolor="#1d2129", highlightthickness=0, bd=0, command=self._vol)
-        self.vol.set(80)
-        self.vol.pack(side="right", padx=(0, 10))
-        tk.Label(row, text="Vol", bg=BG, fg="#9aa3b2").pack(side="right")
+            self.speed_menu.add_command(label="%gx" % sp, command=lambda v=sp: self.set_speed(v))
+        self.aspect_menu = tk.Menu(self.cv, tearoff=0)
+        for i, a in enumerate(ASPECTS):
+            self.aspect_menu.add_radiobutton(label=a[0], variable=self.aspect_i, value=i, command=lambda i=i: self.set_aspect(i))
+        cv = self.cv
+        cv.bind("<Motion>", self._cv_motion)
+        cv.bind("<Enter>", self._cv_motion)
+        cv.bind("<Leave>", lambda e: self._cv_leave())
+        cv.bind("<ButtonPress-1>", self._cv_press)
+        cv.bind("<B1-Motion>", self._cv_drag)
+        cv.bind("<ButtonRelease-1>", self._cv_release)
+        cv.bind("<MouseWheel>", lambda e: self.vol.set(self.vol.get() + (5 if e.delta > 0 else -5)))
+        cv.bind("<Configure>", lambda e: self._redraw())
+        self._tip = ui.Tooltip(cv, lambda: (self._hot or {}).get("tip", ""), lambda: ui.DARK, above=True,
+                               region=self._tip_region)
+        self._card = None                          # the "Up next" card
+        self.top.after(150, self._osd_tick)
+
+    def _no_activate(self, w):
+        """Clicking the strip must not take the keyboard away from the player / main window."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            u = ctypes.windll.user32
+            u.GetParent.restype = ctypes.c_void_p
+            u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+            u.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+            h = u.GetParent(w.winfo_id()) or w.winfo_id()
+            u.SetWindowLongPtrW(h, -20, u.GetWindowLongPtrW(ctypes.c_void_p(h), -20) | 0x08000000)
+        except Exception:
+            pass
+
+    # which controls are shown (narrow windows - the mini player - drop the less important ones)
+    def _layout(self, w):
+        px = self.px
+        paused = self.stopped or not self.mpv or self.mpv.get_flag("pause")
+        left = [("play", ICON["play"] if paused else ICON["pause"], self.toggle, "Play / pause  (Space, K)", True),
+                ("stop", ICON["stop"], self.stop, "Stop  (S)", False),
+                ("prev", ICON["prev"], lambda: self.step(-1), "Previous in the queue  (P)", False),
+                ("next", ICON["next"], lambda: self.step(1), "Next in the queue  (N)", False),
+                ("back", ICON["back"], lambda: self.rel(-10), "Back 10 s  (J)", False),
+                ("fwd", ICON["fwd"], lambda: self.rel(30), "Forward 30 s", False)]
+        right = [("full", ICON["unfull"] if self._is_full() else ICON["full"], lambda: self.fullscreen(),
+                  "Full screen  (F, double-click)", False)]
+        if self.on_popout:
+            right.append(("pop", ICON["attach"] if self.popout_label == "Attach" else ICON["detach"], self.on_popout,
+                          "Back into the Player tab" if self.popout_label == "Attach" else "Play in a window of its own", False))
+        if self.on_mini:
+            right.append(("mini", ICON["mini"], self.on_mini, self.mini_tip, False))
+        right += [("aspect", ICON["aspect"], lambda: self._popup(self.aspect_menu, "aspect"), "Picture shape  (A)", False),
+                  ("speed", None, lambda: self._popup(self.speed_menu, "speed"), "Speed", False),
+                  ("chap", ICON["chapters"], lambda: self._popup(self.chap_menu, "chap", self._fill_chapters), "Chapters", False),
+                  ("tracks", ICON["subs"], lambda: self._popup(self.tracks_menu, "tracks", self._fill_tracks),
+                   "Audio, subtitles, sync and night mode", False),
+                  ("shot", ICON["camera"], self.screenshot, "Save a picture of this frame  (Shift+S)", False)]
+        if w < px(620):                                         # mini player: just the essentials
+            left = [x for x in left if x[0] in ("play", "back", "fwd")]
+            right = [x for x in right if x[0] in ("full", "pop", "mini", "tracks")]
+        return left, right
+
+    def _redraw(self, pos=None):
+        cv = getattr(self, "cv", None)
+        if cv is None:
+            return
+        try:
+            cv.delete("all")
+            w = max(1, cv.winfo_width())
+        except tk.TclError:
+            return
+        px = self.px
+        h = px(BAR_H)
+        # soft fade into the video above
+        for i in range(6):
+            cv.create_rectangle(0, i * px(3), w, (i + 1) * px(3), width=0, fill=_mix(OSD_BG, "#000000", 0.5 - i * 0.08))
+        self._items = []
+        # ---- seek row
+        sx0, sx1, sy = px(18), w - px(18), px(26)
+        self._seek_box = (sx0, sy - px(10), sx1, sy + px(10))
+        hot = self.hover_x is not None or self.seeking
+        th = px(3) if not hot else px(5)
+        cv.create_rectangle(sx0, sy - th, sx1, sy + th, fill=TRACK, width=0)
+        if self.size and self.ranges:                            # downloaded parts of a streaming file
+            for a, b in self.ranges:
+                cv.create_rectangle(sx0 + (sx1 - sx0) * a / self.size, sy - th, sx0 + (sx1 - sx0) * b / self.size,
+                                    sy + th, fill=BUF, width=0)
+        if self.dur:
+            if pos is None:
+                try:
+                    pos = self.mpv.get_double("time-pos") if self.mpv else 0
+                except Exception:
+                    pos = 0
+            x = sx0 + (sx1 - sx0) * min(1.0, max(0.0, (pos or 0) / self.dur))
+            cv.create_rectangle(sx0, sy - th, x, sy + th, fill=ACC, width=0)
+            for t, _title in self.chapters[1:]:                  # chapter marks
+                cx = sx0 + (sx1 - sx0) * t / self.dur
+                cv.create_line(cx, sy - th - px(2), cx, sy + th + px(2), fill="#8a93a5")
+            r = px(7) if hot else px(5)
+            cv.create_oval(x - r, sy - r, x + r, sy + r, fill=FG, width=0)
+            thumb_up = self.thumb_win is not None and self.thumb_win.winfo_ismapped()
+            if self.hover_x is not None and not thumb_up:        # (the preview picture shows the time itself)
+                t = self._x_to_time(self.hover_x)
+                label = fmt_time(t)
+                for ct, title in reversed(self.chapters):
+                    if ct <= t:
+                        label += "  " + title[:30]
+                        break
+                tx = min(max(self.hover_x, sx0 + px(40)), sx1 - px(40))
+                cv.create_text(tx, sy - px(16), text=label, anchor="s", fill=FG, font=self.f_small)
+        # ---- control row
+        cy = px(62)
+        left, right = self._layout(w)
+        x = px(10)
+        for key, glyph, cmd, tip, big in left:
+            bw = px(48) if big else px(40)
+            self._icon(key, glyph, cmd, tip, x, cy, bw, big)
+            x += bw
+        # volume: icon (mute toggle) + slim bar
+        v = self.vol.get()
+        muted = bool(self.mpv and self.mpv.get_flag("mute"))
+        self._icon("mute", ICON["mute"] if muted or v == 0 else ICON["vol"], self.toggle_mute, "Mute  (M)", x + px(4), cy, px(36), False)
+        x += px(40)
+        vx0, vx1 = x, x + px(80)
+        self._vol_box = (vx0, cy - px(10), vx1, cy + px(10))
+        cv.create_rectangle(vx0, cy - px(2), vx1, cy + px(2), fill=TRACK, width=0)
+        vf = vx0 + (vx1 - vx0) * min(1.0, v / 130.0)
+        cv.create_rectangle(vx0, cy - px(2), vf, cy + px(2), fill=FG if not muted else MUTED, width=0)
+        cv.create_oval(vf - px(5), cy - px(5), vf + px(5), cy + px(5), fill=FG, width=0)
+        self._items.append(dict(key="volbar", box=self._vol_box, tip="Volume  (Up / Down, mouse wheel)", cmd=None))
+        x = vx1 + px(16)
+        tt = self.time.get()
+        cv.create_text(x, cy, text=tt, anchor="w", fill=FG, font=self.f_ui)
+        x += int(self.f_ui.measure(tt)) + px(16)
+        xr = w - px(10)
+        for key, glyph, cmd, tip, big in right:
+            if key == "speed":
+                text = self._speed_label
+                bw = max(px(40), int(self.f_ui.measure(text)) + px(16))
+                self._text_btn(key, text, cmd, tip, xr - bw, cy, bw)
+            else:
+                bw = px(40)
+                self._icon(key, glyph, cmd, tip, xr - bw, cy, bw, False)
+            xr -= bw
+        msg = self.status.get()
+        if msg and xr - x > px(60):
+            cv.create_text(x, cy, text=_elide(msg, self.f_ui, xr - x - px(10)), anchor="w", fill=MUTED, font=self.f_ui)
+
+    def _icon(self, key, glyph, cmd, tip, x, cy, bw, big):
+        cv, px = self.cv, self.px
+        lit = self._hot is not None and self._hot.get("key") == key
+        f = self.f_big if big else self.f_icon
+        col = "#ffffff" if lit else FG
+        cv.create_text(x + bw // 2, cy, text=glyph, font=f, fill=col)
+        if lit:                                                   # icons have no bold: draw it twice, 1 px apart
+            cv.create_text(x + bw // 2 + 1, cy, text=glyph, font=f, fill=col)
+        self._items.append(dict(key=key, box=(x, cy - px(18), x + bw, cy + px(18)), cmd=cmd, tip=tip))
+
+    def _text_btn(self, key, text, cmd, tip, x, cy, bw):
+        lit = self._hot is not None and self._hot.get("key") == key
+        self.cv.create_text(x + bw // 2, cy, text=text, font=self.f_bold if lit else self.f_ui, fill=FG)
+        self._items.append(dict(key=key, box=(x, cy - self.px(18), x + bw, cy + self.px(18)), cmd=cmd, tip=tip))
+
+    def _item_at(self, x, y):
+        for it in self._items:
+            x0, y0, x1, y1 = it["box"]
+            if x0 <= x < x1 and y0 <= y < y1:
+                return it
+        return None
+
+    def _in(self, box, e):
+        return box[0] <= e.x <= box[2] and box[1] <= e.y <= box[3]
+
+    def _tip_region(self):
+        it = self._hot
+        if not it:
+            return None
+        x, y = self.cv.winfo_rootx(), self.cv.winfo_rooty()
+        return x + it["box"][0], y + it["box"][1], x + it["box"][2], y + it["box"][3]
+
+    def _cv_motion(self, e):
+        self._last_move = time.time()
+        if self._drag:
+            return
+        if self._in(self._seek_box, e):
+            self.hover_x = e.x
+            self._want_thumb(e)
+        elif self.hover_x is not None:
+            self.hover_x = None
+            self._hide_thumb()
+        it = self._item_at(e.x, e.y)
+        if (it or {}).get("key") != (self._hot or {}).get("key"):
+            self._hot = it
+            self.cv.configure(cursor="hand2" if it or self.hover_x is not None else "")
+            self._tip._hide()
+            if it and it.get("tip"):
+                self._tip._schedule()
+        elif self.hover_x is not None:
+            self.cv.configure(cursor="hand2")
+        self._redraw()
+
+    def _cv_leave(self):
+        self._hot, self.hover_x = None, None
+        self._hide_thumb()
+        self._redraw()
+
+    def _cv_press(self, e):
+        self._tip._hide()
+        if self._in(self._seek_box, e):
+            self._drag = "seek"
+            self.seeking = True
+            self._seek_to(e.x)
+        elif self._in(self._vol_box, e):
+            self._drag = "vol"
+            self._vol_at(e.x)
+        else:
+            self._down = self._item_at(e.x, e.y)
+
+    def _cv_drag(self, e):
+        if self._drag == "seek":
+            self.hover_x = e.x
+            self._seek_to(e.x)
+        elif self._drag == "vol":
+            self._vol_at(e.x)
+
+    def _cv_release(self, e):
+        d, self._drag = self._drag, None
+        self.seeking = False
+        down, self._down = self._down, None
+        if d is None and down is not None and self._item_at(e.x, e.y) is down and down.get("cmd"):
+            down["cmd"]()
+        self._redraw()
+
+    def _vol_at(self, x):
+        x0, _y0, x1, _y1 = self._vol_box
+        self.vol.set(round(130 * min(1.0, max(0.0, (x - x0) / max(1, x1 - x0)))))
+
+    def _popup(self, menu, key, fill=None):
+        if fill:
+            fill()
+        it = next((i for i in self._items if i["key"] == key), None)
+        x0, y0 = (it["box"][0], it["box"][1]) if it else (0, 0)
+        try:
+            menu.tk_popup(self.cv.winfo_rootx() + x0, self.cv.winfo_rooty() + y0 - self.px(4))
+        finally:
+            menu.grab_release()
+
+    def _is_full(self):
+        try:
+            return bool(self.is_full()) if self.is_full else False
+        except Exception:
+            return False
+
+    # ---- showing / hiding the strip (and the Up next card) -------------------------------------------------------
+    def _osd_tick(self):
+        """Every 120 ms: keep the strip over the bottom of the video; show it while the mouse moves over the video,
+        while paused or stopped, and hide it 2.5 s after the mouse stopped while playing."""
+        osd = getattr(self, "osd", None)
+        try:
+            if osd is None or not osd.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        try:
+            v = self.video
+            shown_ok = v.winfo_viewable() and v.winfo_toplevel().state() in ("normal", "zoomed") and v.winfo_height() > 60
+            vx, vy, vw, vh = v.winfo_rootx(), v.winfo_rooty(), v.winfo_width(), v.winfo_height()
+            ptr = v.winfo_pointerxy()
+            inside = vx <= ptr[0] < vx + vw and vy <= ptr[1] < vy + vh
+            if inside and ptr != self._last_ptr:
+                self._last_move = time.time()
+            self._last_ptr = ptr
+            h = min(self.px(BAR_H), vh)
+            over_bar = inside and ptr[1] >= vy + vh - h
+            idle = time.time() - self._last_move > 2.5
+            paused = self.stopped or not self.mpv or not self.cur or self.mpv.get_flag("pause")
+            want = shown_ok and inside and (not idle or over_bar or paused)
+            if want:
+                geo = "%dx%d+%d+%d" % (vw, h, vx, vy + vh - h)
+                if geo != getattr(self, "_osd_geo", None):
+                    self._osd_geo = geo
+                    osd.geometry(geo)
+                if not self._osd_on:
+                    try:                               # the mini player is always on top: so are its controls
+                        top_most = bool(int(v.winfo_toplevel().attributes("-topmost")))
+                        osd.attributes("-topmost", top_most)
+                        if self._card is not None:
+                            self._card.attributes("-topmost", top_most)
+                    except (tk.TclError, ValueError):
+                        pass
+                    osd.deiconify()
+                    osd.lift()
+                    if not getattr(self, "_noact_done", False):
+                        self._no_activate(osd)
+                        self._noact_done = True
+                    self._osd_on = True
+                    self._redraw()
+            elif self._osd_on:
+                osd.withdraw()
+                self._osd_on = False
+                self._hot, self.hover_x = None, None
+                self._hide_thumb()
+                self._tip._hide()
+            self._card_tick(shown_ok, vx, vy, vw, vh)
+        except (tk.TclError, Exception):
+            pass
+        try:
+            self.top.after(120, self._osd_tick)
+        except tk.TclError:
+            pass
+
+    def _card_tick(self, shown_ok, vx, vy, vw, vh):
+        """Near the end of a file with another one queued: a small 'Up next' card with Play now / Cancel."""
+        nxt = self.queue[self.index + 1] if self.mpv and self.cur and self.index + 1 < len(self.queue) else None
+        left = None
+        if nxt and self.dur > 60 and not self.stopped and not self.next_cancelled:
+            try:
+                left = self.dur - (self.mpv.get_double("time-pos") or 0)
+            except Exception:
+                left = None
+        if left is None or not 0 < left <= UP_NEXT_S or not shown_ok:
+            if self._card is not None:
+                self._card.destroy()
+                self._card = None
+            return
+        px = self.px
+        if self._card is None:
+            c = self._card = tk.Toplevel(self.parent)
+            c.overrideredirect(True)
+            try:
+                c.transient(self.parent.winfo_toplevel())
+                c.attributes("-alpha", 0.94)
+            except tk.TclError:
+                pass
+            c.cv = tk.Canvas(c, bg=OSD_BG, highlightthickness=0, bd=0, width=px(340), height=px(92))
+            c.cv.pack()
+            c.cv.bind("<ButtonRelease-1>", self._card_click)
+            c.cv.bind("<Motion>", lambda e: self._card_draw(e.x, e.y))
+            self.top.after(50, lambda: self._no_activate(c))
+        cw, ch = px(340), px(92)
+        c = self._card
+        geo = "%dx%d+%d+%d" % (cw, ch, vx + vw - cw - px(20), vy + vh - ch - px(BAR_H) - px(12))
+        if geo != getattr(c, "geo", None):
+            c.geo = geo
+            c.geometry(geo)
+            c.lift()
+        c.left, c.title = int(left + 0.99), nxt.get("title", "")
+        self._card_draw()
+
+    def _card_draw(self, mx=-1, my=-1):
+        c = self._card
+        if c is None:
+            return
+        cv, px = c.cv, self.px
+        cv.delete("all")
+        cv.create_text(px(16), px(18), anchor="w", text="Up next", fill=MUTED, font=self.f_small)
+        cv.create_text(px(16), px(40), anchor="w", text=_elide(c.title, self.f_bold, px(310)), fill=FG, font=self.f_bold)
+        c.boxes = {}
+        x = px(16)
+        for key, text in (("now", "Play now"), ("cancel", "Cancel")):
+            w = int(self.f_ui.measure(text)) + px(4)
+            box = (x, px(60), x + w, px(82))
+            lit = box[0] <= mx < box[2] and box[1] <= my < box[3]
+            cv.create_text(x, px(71), anchor="w", text=text, fill=FG if key == "now" else MUTED,
+                           font=self.f_bold if lit else self.f_ui)
+            c.boxes[key] = box
+            x += w + px(22)
+        cv.create_text(px(324), px(71), anchor="e", text="in %d s" % c.left, fill=MUTED, font=self.f_ui)
+        cv.configure(cursor="hand2" if any(b[0] <= mx < b[2] and b[1] <= my < b[3] for b in c.boxes.values()) else "")
+
+    def _card_click(self, e):
+        c = self._card
+        if c is None:
+            return
+        for key, b in c.boxes.items():
+            if b[0] <= e.x < b[2] and b[1] <= e.y < b[3]:
+                if key == "now":
+                    self.step(1)
+                else:
+                    self.next_cancelled = True
+                c.destroy()
+                self._card = None
+                return
 
     def bind_keys(self, w):
         def key(seq, fn):
@@ -258,7 +703,7 @@ class PlayerPanel:
         key("<space>", self.toggle)
         key("<Left>", lambda: self.rel(-5)); key("<Right>", lambda: self.rel(5))
         key("<Shift-Left>", lambda: self.rel(-30)); key("<Shift-Right>", lambda: self.rel(30))
-        key("<Up>", lambda: self.vol.set(min(130, self.vol.get() + 5))); key("<Down>", lambda: self.vol.set(max(0, self.vol.get() - 5)))
+        key("<Up>", lambda: self.vol.set(self.vol.get() + 5)); key("<Down>", lambda: self.vol.set(self.vol.get() - 5))
         key("<Prior>", lambda: self.chapter(-1)); key("<Next>", lambda: self.chapter(1))
         key("f", lambda: self.fullscreen()); key("<Escape>", lambda: self.fullscreen(False))
         key("m", lambda: self.mpv.set("mute", not self.mpv.get_flag("mute")))
@@ -267,6 +712,10 @@ class PlayerPanel:
         key("z", lambda: self.sub_delay(-0.1)); key("x", lambda: self.sub_delay(0.1))
         key("<comma>", lambda: self.sub_scale(-0.1)); key("<period>", lambda: self.sub_scale(0.1))
         key("<Control-o>", self.open_dialog); key("<F1>", self.help); key("<question>", self.help)
+        key("j", lambda: self.rel(-10)); key("k", self.toggle); key("l", lambda: self.rel(10))
+        key("S", self.screenshot); key("Z", lambda: self.audio_delay(-0.1)); key("X", lambda: self.audio_delay(0.1))
+        for n in range(10):
+            key(str(n), lambda n=n: self.seek_percent(n * 10))
 
     def _key_ok(self, e):
         """Shortcuts apply when this player has the focus (not while typing in another widget of the main window)."""
@@ -284,6 +733,9 @@ class PlayerPanel:
         self.index, self.cur = i, self.queue[i]
         self.prefetched = False
         self.stopped = False
+        self.next_cancelled = False
+        self._last_pos = 0.0
+        self._eof_done = False
         self.ranges, self.size, self.rate_hist = [], 0, []
         self.dur = 0.0
         e = self.cur
@@ -346,7 +798,7 @@ class PlayerPanel:
         self.mpv.set("video-aspect-override", ov)
         self.mpv.set("panscan", pan)
         self.mpv.set("keepaspect", keep)
-        self.mb_aspect["text"] = "Aspect" if i == 0 else name.split(" ")[0]
+        self._aspect_name = name
         self.status.set("Aspect: %s" % name)
 
     def rel(self, secs):
@@ -365,7 +817,53 @@ class PlayerPanel:
 
     def set_speed(self, v):
         self.mpv.set("speed", v)
-        self.mb_speed["text"] = "%gx" % v
+        self._speed_label = "%gx" % v
+        self._redraw()
+
+    def seek_percent(self, pct):
+        if self.mpv:
+            try:
+                self.mpv.command("seek", pct, "absolute-percent")
+            except mpvlib.MpvError:
+                pass
+
+    def toggle_mute(self):
+        if self.mpv:
+            self.mpv.set("mute", not self.mpv.get_flag("mute"))
+            self._redraw()
+
+    def audio_delay(self, d):
+        """Sound out of sync with the picture: move it earlier (-) or later (+)."""
+        if self.mpv:
+            self.mpv.set("audio-delay", self.mpv.get_double("audio-delay") + d)
+            self.status.set("Audio delay %+.1f s" % self.mpv.get_double("audio-delay"))
+
+    def set_night(self, on=None):
+        """Night mode: evens out loud and quiet parts (speech louder, explosions softer)."""
+        if not self.mpv:
+            return
+        on = self.night.get() if on is None else on
+        self.night.set(on)
+        try:
+            self.mpv.set("af", "lavfi=[dynaudnorm=f=150:g=15:p=0.9]" if on else "")
+        except mpvlib.MpvError:
+            pass
+        self.status.set("Night mode on" if on else "Night mode off")
+
+    def screenshot(self):
+        """Save the current frame (with subtitles) as a PNG in Pictures\\Bit Torrent Client."""
+        if not self.mpv or not self.cur:
+            return
+        d = os.path.join(os.path.expanduser("~"), "Pictures", "Bit Torrent Client")
+        try:
+            os.makedirs(d, exist_ok=True)
+            name = re.sub(r'[\\/:*?"<>|]+', "_", self.cur.get("title") or "frame")[:80]
+            pos = self.mpv.get_double("time-pos")
+            path = os.path.join(d, "%s %s.png" % (name, fmt_time(pos).replace(":", "-")))
+            self.mpv.command("screenshot-to-file", path, "subtitles")
+            self.status.set("Picture saved: %s" % os.path.basename(path))
+        except (OSError, mpvlib.MpvError) as e:
+            self.status.set("Picture not saved: %s" % e)
 
     def sub_delay(self, d):
         self.mpv.set("sub-delay", self.mpv.get_double("sub-delay") + d)
@@ -378,6 +876,8 @@ class PlayerPanel:
     def _vol(self, v):
         if self.mpv:
             self.mpv.set("volume", v)
+            if v and self.mpv.get_flag("mute"):
+                self.mpv.set("mute", False)
 
     def fullscreen(self, on=None):
         if self.on_fullscreen:
@@ -392,13 +892,17 @@ class PlayerPanel:
         for kind, prop, label in (("audio", "aid", "Audio"), ("sub", "sid", "Subtitles")):
             m.add_command(label=label, state="disabled")
             if kind == "sub":
-                m.add_command(label="  Off", command=lambda: self.mpv.set("sid", "no"))
+                m.add_command(label="  Off", command=lambda: self.pick_track("sub", None))
             for t in self.mpv.tracks() if self.mpv else []:
                 if t["type"] == kind:
                     name = " ".join(x for x in (t["lang"], t["title"]) if x) or "Track %d" % t["id"]
                     m.add_command(label=("\u25cf " if t["selected"] else "  ") + name,
-                                  command=lambda p=prop, i=t["id"]: self.mpv.set(p, i))
+                                  command=lambda k=kind, t=t: self.pick_track(k, t))
             m.add_separator()
+        m.add_command(label="Sound earlier (0.1 s)   Shift+Z", command=lambda: self.audio_delay(-0.1))
+        m.add_command(label="Sound later (0.1 s)   Shift+X", command=lambda: self.audio_delay(0.1))
+        m.add_checkbutton(label="Night mode (even out loud and quiet)", variable=self.night, command=self.set_night)
+        m.add_separator()
         m.add_command(label="Load subtitle file\u2026", command=self._load_sub)
         m.add_command(label="Download subtitles (OpenSubtitles)\u2026", command=self.find_subs)
         m.add_separator()
@@ -408,6 +912,40 @@ class PlayerPanel:
         m.add_command(label="Subtitles later (0.1 s)", command=lambda: self.sub_delay(0.1))
         m.add_separator()
         m.add_command(label="Keyboard shortcuts\u2026", command=self.help)
+
+    def pick_track(self, kind, t):
+        """Choose an audio / subtitle track (None = subtitles off) and remember it for the rest of the series."""
+        if not self.mpv:
+            return
+        self.mpv.set("aid" if kind == "audio" else "sid", t["id"] if t else "no")
+        key = series_key(self.cur)
+        if key:
+            prefs = load_prefs(self.state_dir) if self.state_dir else getattr(self, "_mem_prefs", {})
+            prefs.setdefault(key, {})[kind] = {"off": True} if t is None else {"lang": t.get("lang", ""),
+                                                                                "title": t.get("title", "")}
+            if self.state_dir:
+                save_prefs(self.state_dir, prefs)
+            else:
+                self._mem_prefs = prefs
+
+    def _apply_track_prefs(self):
+        """A new file of the same series: pick the audio / subtitles chosen last time (by language and name)."""
+        key = series_key(self.cur)
+        prefs = (load_prefs(self.state_dir) if self.state_dir else getattr(self, "_mem_prefs", {})).get(key or "", {})
+        if not prefs or not self.mpv:
+            return
+        tracks = self.mpv.tracks()
+        for kind, prop in (("audio", "aid"), ("sub", "sid")):
+            want = prefs.get(kind)
+            if not want:
+                continue
+            if want.get("off"):
+                self.mpv.set(prop, "no")
+                continue
+            same = [t for t in tracks if t["type"] == kind and t.get("lang", "") == want.get("lang", "")]
+            best = next((t for t in same if t.get("title", "") == want.get("title", "")), same[0] if same else None)
+            if best is not None:
+                self.mpv.set(prop, best["id"])
 
     def _fill_chapters(self):
         m = self.chap_menu
@@ -452,7 +990,8 @@ class PlayerPanel:
 
     # ---- seek bar
     def _x_to_time(self, x):
-        return self.dur * min(1.0, max(0.0, x / max(1, self.seek.winfo_width())))
+        x0, _y0, x1, _y1 = getattr(self, "_seek_box", (0, 0, max(1, self.cv.winfo_width()), 0))
+        return self.dur * min(1.0, max(0.0, (x - x0) / max(1, x1 - x0)))
 
     def seek_abs(self, t):
         if self.mpv:
@@ -470,7 +1009,7 @@ class PlayerPanel:
 
     def _seek_hover(self, e):
         self.hover_x = e.x
-        self._draw_seek()
+        self._redraw()
         self._want_thumb(e)
 
     def _thumb_ok(self, t):
@@ -495,7 +1034,7 @@ class PlayerPanel:
         url = self.cur["url"]
         if "://" in url:
             url += "?nt=1"                                # a preview must not move the download's playhead
-        x_root, y_root = self.seek.winfo_rootx() + ev.x, self.seek.winfo_rooty()
+        x_root, y_root = self.cv.winfo_rootx() + ev.x, self.cv.winfo_rooty()
         self.grabber.request(url, t, lambda path, x=x_root, y=y_root, t=t: self._later(lambda: self._show_thumb(path, x, y, t)))
 
     def _show_thumb(self, path, x, y, t):
@@ -535,32 +1074,7 @@ class PlayerPanel:
             self._draw_seek(t)
 
     def _draw_seek(self, pos=None):
-        c = self.seek
-        c.delete("all")
-        w, h = max(1, c.winfo_width()), c.winfo_height()
-        y0, y1 = h // 2 - 3, h // 2 + 3
-        c.create_rectangle(0, y0, w, y1, fill="#1d2129", width=0)
-        if self.size and self.ranges:                      # downloaded parts of a streaming file
-            for a, b in self.ranges:
-                c.create_rectangle(w * a / self.size, y0, w * b / self.size, y1, fill=BUF, width=0)
-        if self.dur:
-            if pos is None:
-                pos = self.mpv.get_double("time-pos") if self.mpv else 0
-            x = w * min(1.0, pos / self.dur)
-            c.create_rectangle(0, y0, x, y1, fill=ACC, width=0)
-            for t, _title in self.chapters[1:]:             # chapter marks
-                cx = w * t / self.dur
-                c.create_line(cx, y0 - 2, cx, y1 + 2, fill="#8a93a5")
-            c.create_oval(x - 6, h // 2 - 6, x + 6, h // 2 + 6, fill=FG, width=0)
-            if self.hover_x is not None:
-                t = self._x_to_time(self.hover_x)
-                label = fmt_time(t)
-                for ct, title in reversed(self.chapters):
-                    if ct <= t:
-                        label += "  " + title[:30]
-                        break
-                tx = min(max(self.hover_x, 50), w - 50)
-                c.create_text(tx, 1, text=label, anchor="n", fill=FG, font=("Segoe UI", 8))
+        self._redraw(pos)
 
     # ---- background: availability map, download speed vs bitrate
     def _map_loop(self):
@@ -613,29 +1127,37 @@ class PlayerPanel:
             for ev in m.poll_events():
                 if ev == "file-loaded":
                     self._loaded()
-                elif ev == "end-file" and self.dur and m.get_double("time-pos") >= self.dur - 2:
-                    self._ended()
+                elif ev == "end-file" and self.dur and max(m.get_double("time-pos"), self._last_pos) >= self.dur - 2:
+                    self._ended()                  # (mpv has usually cleared time-pos by now: use the last one seen)
                 elif ev.startswith("msg:"):
                     {"tk-fs": lambda: self.fullscreen(), "tk-fs-off": lambda: self.fullscreen(False),
-                     "tk-aspect": self.set_aspect, "tk-stop": self.stop, "tk-next": lambda: self.step(1), "tk-prev": lambda: self.step(-1), "tk-help": self.help}.get(ev[4:], lambda: None)()
+                     "tk-aspect": self.set_aspect, "tk-stop": self.stop, "tk-shot": self.screenshot, "tk-next": lambda: self.step(1), "tk-prev": lambda: self.step(-1), "tk-help": self.help}.get(ev[4:], lambda: None)()
             self.dur = m.get_double("duration") or self.dur
             pos = m.get_double("time-pos")
+            if pos:
+                self._last_pos = pos
+            # keep-open holds the last frame (no end-file event): the end of the file is 'eof-reached'
+            if self.cur and not self.stopped and not self._eof_done and m.get_flag("eof-reached"):
+                self._ended()
             paused = m.get_flag("pause")
             v = m.get_double("volume", self.vol.get())          # changed with the keys / wheel inside the video
             if abs(v - float(self.vol.get())) >= 1:
-                self.vol.configure(command=lambda x: None)
-                self.vol.set(v)
-                self.vol.configure(command=self._vol)
-            self.btn_play["text"] = "Play" if (paused or self.stopped) else "Pause"
+                self.vol.set(v, push=False)
             self.time.set("%s / %s" % (fmt_time(pos), fmt_time(self.dur)))
             waiting = m.get_flag("paused-for-cache")
+            if waiting:                                    # over the picture itself, where you are looking
+                pct = int(m.get_double("cache-buffering-state"))
+                try:
+                    m.command("show-text", "Buffering\u2026 %d%%" % pct if pct else "Buffering\u2026", 600)
+                except mpvlib.MpvError:
+                    pass
             msg = self._net_status(pos, waiting) if self.cur and self.cur.get("map") else ""
             if msg or waiting:
                 self.status.set(msg or "Waiting for the download\u2026")
             elif self.status.get().startswith(("Loading", "Buffering", "Waiting")) or "downloaded ahead" in self.status.get():
                 self.status.set("")
-            if not self.seeking:
-                self._draw_seek(pos)
+            if not self.seeking and self._osd_on:
+                self._redraw(pos)
             if self.dur and pos > self.dur * 0.85 and not self.prefetched:
                 self._prefetch_next()
             if time.time() - self._saved > 5:
@@ -648,6 +1170,10 @@ class PlayerPanel:
         m, e = self.mpv, self.cur or {}
         self.dur = m.get_double("duration")
         self.chapters = m.chapters()
+        try:
+            self._apply_track_prefs()
+        except Exception:
+            pass
         if self._resume_to:
             self.seek_abs(self._resume_to)
             self.status.set("Resumed at %s" % fmt_time(self._resume_to))
@@ -674,8 +1200,11 @@ class PlayerPanel:
             self._fire(self.queue[self.index + 1]["prefetch"])
 
     def _ended(self):
+        if self._eof_done:
+            return
+        self._eof_done = True
         self._save_pos(final=True)
-        if self.index + 1 < len(self.queue):
+        if self.index + 1 < len(self.queue) and not self.next_cancelled:
             self.play_index(self.index + 1)
         elif self.on_end:
             self.on_end()
@@ -690,6 +1219,13 @@ class PlayerPanel:
 
     def close(self):
         self._save_pos()
+        for w in (getattr(self, "_card", None), getattr(self, "osd", None)):
+            try:
+                if w is not None:
+                    w.destroy()
+            except tk.TclError:
+                pass
+        self._card = self.osd = None
         if self.grabber:
             self.grabber.close()
         if self.thumb_win is not None:
@@ -706,7 +1242,7 @@ class PlayerWindow:
     """A player in a window of its own (also the standalone program). `master` None makes its own root window."""
 
     def __init__(self, master=None, target=None, title="", map_url=None, lib=None, options=None, on_close=None,
-                 queue=None, index=0, session=None, on_dock=None):
+                 queue=None, index=0, session=None, on_dock=None, mini=False):
         self.own_root = master is None
         self.win = tk.Tk() if self.own_root else tk.Toplevel(master)
         self.win.title(title or "Player")
@@ -726,8 +1262,11 @@ class PlayerWindow:
         self.full = False
         self.last_move = 0
         q = queue or ([dict(url=target, title=title or os.path.basename(target), key="", map=map_url)] if target else [])
+        self.mini = False
+        self._normal_geo = None
         self.panel = PlayerPanel(self.win, self.win, q, index, session, lib, options, on_fullscreen=self.fullscreen,
-                                 on_popout=(lambda: on_dock(self)) if on_dock else None, popout_label="Attach")
+                                 on_popout=(lambda: on_dock(self)) if on_dock else None, popout_label="Attach",
+                                 on_mini=lambda: self.set_mini(not self.mini), is_full=lambda: self.full)
         self.mpv = self.panel.mpv
         self.win.protocol("WM_DELETE_WINDOW", self.close)
         if self.panel.error:
@@ -737,6 +1276,8 @@ class PlayerWindow:
         self.panel.video.bind("<Double-Button-1>", lambda e: self.fullscreen())
         self.panel.video.bind("<Button-1>", lambda e: self.panel.toggle())
         self.win.after(500, self._hide_bar_tick)
+        if mini:
+            self.win.after(50, lambda: self.set_mini(True))
 
     # kept for callers/tests that used the old single-class API
     def __getattr__(self, name):
@@ -763,16 +1304,40 @@ class PlayerWindow:
             self.chrome.fullscreen(self.full)
         else:
             self.win.attributes("-fullscreen", self.full)
-        p = self.panel
         self._cursor(False)
         if self.panel.mpv:
             self.panel.mpv.set("cursor-autohide", 1000 if self.full else "no")
         self.last_move = time.time()
+        self.panel._last_move = time.time()
+        self.panel._redraw()
+
+    def set_mini(self, on):
+        """Mini player: a small window that stays on top in the bottom-right corner (the controls shrink to the
+        essentials); the same button makes it big again."""
+        if on == self.mini:
+            return
         if self.full:
-            p.bar.pack_forget()
-        else:
-            p.bar.pack(fill="x", side="bottom")
-            p.video.pack_forget(); p.video.pack(fill="both", expand=True)
+            self.fullscreen(False)
+        self.mini = on
+        try:
+            if on:
+                self._normal_geo = self.win.geometry()
+                x, y, w, h = ui.work_area(self.win)
+                s = self.panel.scale
+                mw, mh = int(480 * s), int(300 * s)
+                self.win.geometry("%dx%d+%d+%d" % (mw, mh, x + w - mw - int(16 * s), y + h - mh - int(16 * s)))
+                self.win.update_idletasks()        # (making it topmost before the move is applied undoes the move)
+                self.win.attributes("-topmost", True)
+                self.panel.mini_tip = "Back to full size"
+            else:
+                self.win.attributes("-topmost", False)
+                self.win.update_idletasks()
+                if self._normal_geo:
+                    self.win.geometry(self._normal_geo)
+                self.panel.mini_tip = "Mini player (stays on top in a corner)"
+        except tk.TclError:
+            pass
+        self.panel._redraw()
 
     def _cursor(self, hidden):
         """Hide / show the mouse pointer over the whole player (Tk widgets and mpv's own video window)."""
@@ -788,18 +1353,18 @@ class PlayerWindow:
             self.panel.mpv.set("cursor-autohide", 1000 if self.full else "no")
 
     def _motion(self, e):
-        p = self.panel
-        if self.full and not p.bar.winfo_ismapped():
-            p.bar.pack(fill="x", side="bottom")
         self._cursor(False)
         self.last_move = time.time()
+        self.panel._last_move = self.last_move
 
     def _hide_bar_tick(self):
+        """In full screen the mouse pointer hides with the controls (the panel shows / hides the strip itself)."""
         p = self.panel
-        if self.full and p.bar.winfo_ismapped() and time.time() - self.last_move > 2.5:
-            p.bar.pack_forget()
+        self.last_move = max(self.last_move, p._last_move)
         if self.full and time.time() - self.last_move > 2.5:
             self._cursor(True)
+        elif self.full:
+            self._cursor(False)
         if p.mpv:
             self.win.after(500, self._hide_bar_tick)
 

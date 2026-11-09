@@ -450,3 +450,12 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.39
 - **New peer flags:** the country flags in the Peers tab are now the waving flags from Noto Color Emoji (194 countries). Territories and the few countries without one (e.g. Aruba, Hong Kong, Taiwan, Kosovo) keep their previous flat flag.
+
+### 1.9.40 - the player, reworked
+- **New controls** that float over the bottom of the video, in the Aurora style: icons with no boxes (play / pause, stop, previous, next, back 10 s, forward 30 s, mute, slim volume bar, time, screenshot, subtitles & audio, chapters, speed, picture shape, mini player, detach, full screen). They appear when you move the mouse over the video and fade away 2.5 s after it stops while playing (they stay while paused) - in the Player tab, in its own window and in full screen.
+- **Seek bar:** downloaded parts of a streaming file show as a lighter band; hovering shows the time and a preview picture; when it has to wait for the download, "Buffering… 42%" shows on the picture itself.
+- **Mouse and keys:** click the video to pause, double-click for full screen, wheel for volume; J / K / L = back 10 s / pause / forward 10 s; 0-9 jump to 0-90 %; Shift+S saves a picture of the frame in Pictures\Bit Torrent Client.
+- **Up next:** 15 s before the end of an episode a card shows the next one with Play now / Cancel; it then starts by itself. (Playing on to the next file at the end did not happen before.)
+- **Remembers your choices:** the audio and subtitle language you pick are used again for the next episodes of the same series.
+- **Audio delay** (Shift+Z / Shift+X, or the subtitles & audio menu) for sound out of sync, and a **night mode** that evens out loud and quiet parts.
+- **Mini player:** a small always-on-top window in the corner of the screen with just the essential controls; the same button makes it big again, and Attach brings it back into the Player tab.
