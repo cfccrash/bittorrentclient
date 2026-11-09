@@ -942,6 +942,8 @@ class SettingsDialog(_Dialog):
                   style="Muted.TLabel", wraplength=self.px(470), justify="left").grid(row=1, column=0, columnspan=3,
                                                                                        sticky="w", pady=(8, 0))
 
+        self._make_groups()
+
         # Save / Cancel under the section list
         btns = ttk.Frame(side)
         btns.pack(side="top", fill="x", pady=(14, 0))
@@ -964,15 +966,108 @@ class SettingsDialog(_Dialog):
         elif self.current_page is None:
             self._content.pack(side="left", fill="both", expand=True, padx=(10, 0))
         self.current_page = title
+        if title is not None:                   # a page opens with its groups folded (a lone group opens itself)
+            groups = self._groups.get(title, [])
+            for g in groups:
+                self._set_group(g, len(groups) == 1)
         self._paint_nav()
         self._fit()
 
+    # -- the blue group headings fold out (cascade) their options, one group at a time -------------------------
+    ARROW = {False: "\u25B8", True: "\u25BE"}       # ▸ folded / ▾ open
+
+    def _make_groups(self):
+        """Every group box (Appearance, Downloads, Player ...) gets a clickable heading; its options only show when
+        it is opened, and opening one folds the others on that page, so only what you need is on screen."""
+        self._groups, self._heads = {}, {}
+        P, F = self.app.P, self.app.F
+        for title, page in self.pages.items():
+            try:
+                boxes = [w for w in page.winfo_children() if isinstance(w, ttk.LabelFrame)]
+            except (tk.TclError, TypeError):
+                continue
+            for lf in boxes:
+                try:
+                    text = lf.cget("text")
+                    head = tk.Label(lf, text=text, font=F.bold, bg=P["bg"], fg=P["muted"], bd=0, cursor="hand2",
+                                    anchor="w", padx=0, pady=2)
+                    kids = []
+                    for k in lf.winfo_children():
+                        if k is head:
+                            continue
+                        mgr = k.winfo_manager()
+                        if mgr == "grid":
+                            kids.append((k, "grid", None))
+                        elif mgr == "pack":
+                            info = dict(k.pack_info())
+                            info["in_"] = info.pop("in", lf)
+                            kids.append((k, "pack", info))
+                    g = dict(lf=lf, head=head, text=text, kids=kids, open=True, page=title,
+                             padding=lf.cget("padding"))
+                    lf.configure(text="", labelwidget=head)
+                    head.bind("<Button-1>", lambda e, g=g: self._toggle_group(g))
+                    self._groups.setdefault(title, []).append(g)
+                    self._heads[str(head)] = g
+                    self._set_group(g, False)
+                except (tk.TclError, TypeError, AttributeError):
+                    continue
+
+    def _set_group(self, g, on):
+        if g["open"] == on:
+            self._paint_head(g)
+            return
+        g["open"] = on
+        for k, mgr, info in g["kids"]:
+            try:
+                if mgr == "grid":
+                    k.grid() if on else k.grid_remove()
+                elif on:
+                    k.pack(**info)
+                else:
+                    k.pack_forget()
+            except tk.TclError:
+                pass
+        self._paint_head(g)
+        try:
+            # folded, the box has nothing inside it and would shrink to nothing (heading too): size it for the heading
+            lf, head = g["lf"], g["head"]
+            if on:
+                lf.configure(padding=g["padding"], width=0, height=0)
+            else:
+                head.update_idletasks()
+                lf.configure(padding=(14, 2, 14, 2), width=head.winfo_reqwidth() + self.px(30),
+                             height=head.winfo_reqheight() + self.px(10))
+        except tk.TclError:
+            pass
+
+    def _paint_head(self, g, hover=False):
+        P = self.app.P
+        try:
+            g["head"].configure(text="%s  %s" % (g["text"], self.ARROW[g["open"]]),
+                                fg=P["fg"] if (g["open"] or hover) else P["muted"])
+        except tk.TclError:
+            pass
+
+    def _toggle_group(self, g):
+        on = not g["open"]
+        for other in self._groups.get(g["page"], []):
+            self._set_group(other, on and other is g)
+        self._fit()
+
     def _hovered(self, w):
-        """See-through hover (from the pointer position): light up the section under the pointer."""
+        """See-through hover (from the pointer position): light up the section or group heading under the pointer."""
         t = self._nav_of.get(str(w)) if w is not None else None
         if t != getattr(self, "_nav_hover", None):
             self._nav_hover = t
             self._paint_nav(hover=t)
+        g = self._heads.get(str(w)) if w is not None else None
+        old = getattr(self, "_head_hover", None)
+        if g is not old:
+            self._head_hover = g
+            if old is not None:
+                self._paint_head(old)
+            if g is not None:
+                self._paint_head(g, hover=True)
 
     def _paint_nav(self, hover=None):
         """No boxes: the open section and the pointed-at one are bold white."""

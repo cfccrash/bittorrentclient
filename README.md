@@ -444,3 +444,6 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.37
 - Settings: pointing at a page no longer turns it into a black panel with white frames around the groups - only buttons, tick boxes and drop-downs react to the pointer.
+
+### 1.9.38
+- **Settings groups fold out:** each page opens showing just its group headings (Appearance, Downloads, Windows integration, Player ...). Click a heading and its options cascade open beneath it; opening another folds the first away, so only what you need is on screen. A page with a single group opens it straight away.
