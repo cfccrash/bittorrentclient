@@ -447,3 +447,6 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.38
 - **Settings groups fold out:** each page opens showing just its group headings (Appearance, Downloads, Windows integration, Player ...). Click a heading and its options cascade open beneath it; opening another folds the first away, so only what you need is on screen. A page with a single group opens it straight away.
+
+### 1.9.39
+- **New peer flags:** the country flags in the Peers tab are now the waving flags from Noto Color Emoji (194 countries). Territories and the few countries without one (e.g. Aruba, Hong Kong, Taiwan, Kosovo) keep their previous flat flag.

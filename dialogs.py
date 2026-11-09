@@ -1687,7 +1687,7 @@ def about_content(parent, app, px, padding=(0, 0, 0, 0), close=None):
               wraplength=px(420), justify="left").pack(anchor="w")
     ttk.Label(body, text="Credits", style="Muted.TLabel").pack(anchor="w", pady=(14, 2))
     ttk.Label(body, text="Peer locations: IP geolocation by DB-IP.com (CC BY 4.0)\n"
-                         "National flags: flag-icons (MIT)\n"
+                         "National flags: Noto Color Emoji (Apache 2.0) and flag-icons (MIT)\n"
                          "Icons: Segoe Fluent Icons / Segoe MDL2 Assets (Windows)",
               wraplength=px(420), justify="left").pack(anchor="w")
     ttk.Label(body, text="Your data stays on this computer; the app only talks to trackers, DHT peers and "
