@@ -1,5 +1,7 @@
 """Look and feel for Bit Torrent Client: Windows 11 style light/dark palettes, fonts, ttk styles, flat toolbar
 buttons and tooltips. Pure tkinter, no third-party packages."""
+import os
+import sys
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
@@ -530,6 +532,19 @@ def center_over(win, parent):
     x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
     y = parent.winfo_rooty() + (parent.winfo_height() - h) // 3
     win.geometry("+%d+%d" % (max(0, x), max(0, y)))
+
+
+def open_path(path):
+    """Show a folder (or open a file) with the system: Explorer on Windows, the file manager on Linux."""
+    if hasattr(os, "startfile"):
+        os.startfile(path)
+        return True
+    if sys.platform.startswith("linux"):
+        import linux
+        return linux.open_path(path)
+    import subprocess
+    subprocess.Popen(["open", path])
+    return True
 
 
 def work_area(root):

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Bit Torrent Client
+GenericName=BitTorrent Client
+Comment=Download and stream torrents
+Exec=/usr/bin/bittorrentclient %U
+Icon=bittorrentclient
+Terminal=false
+Categories=Network;FileTransfer;P2P;
+MimeType=x-scheme-handler/magnet;application/x-bittorrent;
+StartupWMClass=Bittorrentclient

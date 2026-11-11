@@ -1,4 +1,5 @@
-"""Start with Windows: a per-user Run entry (no administrator rights needed)."""
+"""Start at sign-in: on Windows a per-user Run entry (no administrator rights needed), on Linux a .desktop file in
+~/.config/autostart (see linux.py)."""
 import os
 import sys
 
@@ -7,7 +8,11 @@ NAME = "BitTorrentClient"      # the installer writes the same value, so the two
 
 
 def available():
-    return sys.platform == "win32"
+    return sys.platform == "win32" or sys.platform.startswith("linux")
+
+
+def _linux():
+    return sys.platform.startswith("linux")
 
 
 def command():
@@ -20,6 +25,9 @@ def command():
 def is_enabled():
     if not available():
         return False
+    if _linux():
+        import linux
+        return linux.autostart_enabled()
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
@@ -30,9 +38,12 @@ def is_enabled():
 
 
 def set_enabled(on):
-    """True if the registry now matches `on`."""
+    """True if the registry (Linux: the autostart file) now matches `on`."""
     if not available():
         return False
+    if _linux():
+        import linux
+        return linux.set_autostart(on)
     try:
         import winreg
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:

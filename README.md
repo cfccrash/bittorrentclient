@@ -39,6 +39,29 @@ there; details under "Releases (for the maintainer)" in the 1.9.21 notes.
 
 (Or just run it directly: `py bittorrentclient.py`.)
 
+## Install it on Arch Linux
+
+Every release also has a prebuilt Linux program and a ready `PKGBUILD` on the
+[releases page](https://github.com/cfccrash/bittorrentclient-releases/releases). To install it as a package:
+
+```bash
+mkdir bittorrentclient && cd bittorrentclient
+curl -LO https://github.com/cfccrash/bittorrentclient-releases/releases/latest/download/PKGBUILD
+makepkg -si
+```
+
+That installs it in `/opt/bittorrentclient` with a menu entry, the icon and the `bittorrentclient` command, and pulls in
+`mpv` (for the built-in player) and `xdg-utils`. Updating later: run the same three lines again (or use an AUR helper if
+the package is published there). Optional: `libnotify` for desktop notifications.
+
+What is different on Linux:
+- The window uses your desktop's own title bar (the Aurora title bar, Windows Snap and the see-through option windows are
+  Windows features); full screen (F11) and everything else work the same.
+- There is no tray icon: closing the window quits. "Start when I sign in" adds an entry to `~/.config/autostart`.
+- *Use Bit Torrent Client for magnet links* (Settings > General) sets it as the handler with `xdg-mime`.
+- Settings, torrents and plugins live in `~/.local/share/BitTorrentClient`; player screenshots go to your Pictures folder.
+- Wayland desktops run it through XWayland (Tk and the embedded video need X11).
+
 ## Using it
 The window follows the Windows 11 look: a flat toolbar, a table with a slim coloured progress bar per torrent
 (blue downloading, green seeding, amber checking, grey paused, red error), a details strip for the selected
@@ -467,3 +490,7 @@ downloaded yet waits for it instead of failing.
 - Player keys work again: in the Player tab they now act whenever that tab is showing (not only when the keyboard happened to be inside it), and not while you type in a text box or in another window's dialog.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
+
+### 1.9.43 - Linux
+- **Runs on Arch Linux (and other Linux desktops):** every release now also has a prebuilt Linux program and a `PKGBUILD` (see *Install it on Arch Linux*). Folders open in your file manager, finished downloads raise a desktop notification, "Start when I sign in" and the magnet-link handler use the freedesktop standards, settings live in `~/.local/share`, and the player draws its own icons where the Windows icon font is missing.
+- The release build now also runs the whole test suite on Arch Linux (on a virtual display) and takes screenshots there.

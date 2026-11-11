@@ -388,8 +388,19 @@ def main():
     # ---- start with Windows / start hidden in the tray
     import autostart as autostart_t
     assert "--minimized" in autostart_t.command()
-    with mock.patch.object(autostart_t.sys, "platform", "linux"):   # never touch the real Run key from a test
+    with mock.patch.object(autostart_t.sys, "platform", "darwin"):  # never touch the real Run key from a test
         assert autostart_t.available() is False and autostart_t.is_enabled() is False and autostart_t.set_enabled(True) is False
+    # Linux: a .desktop file in ~/.config/autostart (here a temporary XDG_CONFIG_HOME), and the menu entry text
+    import linux as linux_t
+    xdg = tempfile.mkdtemp()
+    with mock.patch.object(autostart_t.sys, "platform", "linux"), \
+            mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": xdg, "XDG_DATA_HOME": xdg}):
+        assert autostart_t.available() and not autostart_t.is_enabled() and autostart_t.set_enabled(True)
+        f = os.path.join(xdg, "autostart", "bittorrentclient.desktop")
+        assert autostart_t.is_enabled() and "--minimized" in open(f).read() and "[Desktop Entry]" in open(f).read()
+        assert autostart_t.set_enabled(False) and not os.path.exists(f)
+        entry = linux_t.desktop_entry()
+    assert "MimeType=x-scheme-handler/magnet;application/x-bittorrent;" in entry and "%U" in entry, entry
     with mock.patch.object(autostart_t, "available", return_value=True), \
             mock.patch.object(autostart_t, "is_enabled", return_value=False), \
             mock.patch.object(autostart_t, "set_enabled") as set_en:

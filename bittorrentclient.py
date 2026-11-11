@@ -56,7 +56,13 @@ LEGACY_DIRS = ("PyTorrent",)   # earlier name of this app: its saved torrents an
 
 
 def data_dir():
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    base = os.environ.get("APPDATA")
+    if not base:                           # Linux: ~/.local/share (XDG), not a visible folder in the home folder
+        if sys.platform.startswith("linux"):
+            import linux
+            base = linux.data_home()
+        else:
+            base = os.path.expanduser("~")
     d = os.path.join(base, APP_DIR)
     if not os.path.exists(d):
         for old in LEGACY_DIRS:
@@ -2258,6 +2264,15 @@ class App:
                 import winsound
                 winsound.MessageBeep(winsound.MB_ICONASTERISK)
             except Exception:
+                try:
+                    self.root.bell()                                  # Linux / other systems
+                except tk.TclError:
+                    pass
+        if sys.platform.startswith("linux"):                          # the desktop's own notification too
+            try:
+                import linux
+                linux.notify("Download complete", text)
+            except Exception:
                 pass
         self._flash_taskbar()
         if tray.available() and self.tray.notify("Download complete", text):
@@ -2324,7 +2339,12 @@ class App:
                 if manual:
                     messagebox.showinfo(APP, "You are up to date (version %s)." % version_mod.VERSION, parent=parent)
             elif kind == "newer":
-                if manual and messagebox.askyesno(APP, "Version %s is available (you have %s).\n\nOpen the download page?"
+                if sys.platform.startswith("linux"):
+                    if manual:
+                        messagebox.showinfo(APP, "Version %s is available (you have %s).\n\nUpdate it with your "
+                                            "package manager, for example:  yay -Syu bittorrentclient-bin"
+                                            % (val["version"], version_mod.VERSION), parent=parent)
+                elif manual and messagebox.askyesno(APP, "Version %s is available (you have %s).\n\nOpen the download page?"
                                                   % (val["version"], version_mod.VERSION), parent=parent) \
                         and val["page"].startswith("https://"):
                     import webbrowser
@@ -2357,10 +2377,15 @@ class App:
             self.tray.hide()
 
     def register_magnet(self):
+        if sys.platform.startswith("linux"):                       # xdg-mime + a menu entry (linux.py)
+            import linux
+            ok, msg = linux.register_magnet()
+            (messagebox.showinfo if ok else messagebox.showerror)(APP, msg, parent=self.root)
+            return
         try:
             import winreg
         except ImportError:
-            messagebox.showinfo(APP, "This option only works on Windows.", parent=self.root)
+            messagebox.showinfo(APP, "This option is not available on this system.", parent=self.root)
             return
         if getattr(sys, "frozen", False):
             cmd = '"%s" "%%1"' % sys.executable
@@ -2612,11 +2637,10 @@ class App:
         sel = self._selected()
         if not sel or sel[0] not in self.mgr.sessions:
             return
-        d = self.mgr.sessions[sel[0]].save_dir
-        if hasattr(os, "startfile"):
-            os.startfile(d)
-        else:
-            subprocess.Popen(["xdg-open", d])
+        try:
+            ui.open_path(self.mgr.sessions[sel[0]].save_dir)
+        except OSError:
+            pass
 
     def _on_space(self, _e):
         self.toggle_pause()

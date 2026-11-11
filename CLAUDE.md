@@ -44,6 +44,15 @@ Current version is in `version.py`; release notes are the sections at the bottom
 - Tick boxes: `ui.check_images()` (PNG made with stdlib zlib, real alpha) -> `Round.indicator` element in the TCheckbutton layout;
   the Files dialog and the context menu use the `*_tight` images.
 
+## Linux
+- `linux.py`: XDG data/config dirs, .desktop (menu, autostart, magnet via xdg-mime), open_path (xdg-open), notify-send,
+  pictures_dir. `ui.open_path` is the one way to open a folder. No tray/chrome/see-through/firewall/DnD on Linux.
+- Player on Linux: no Segoe icon font -> `player.draw_glyph` vector icons; mpv's X11 window gets the mouse, so the
+  mpv MBTN/WHEEL keybinds are added there (Windows: Tk bindings on panel.video).
+- CI job `linux` (archlinux container): tests under xvfb-run, `tools/linux_screens.py` screenshots (artifact), PyInstaller
+  build -> BitTorrentClient-linux-x86_64-<ver>.tar.gz + PKGBUILD (from packaging/linux/PKGBUILD.in) on the release.
+  No WSL on the dev PC: check Linux through that job's screenshots.
+
 ## Things learned the hard way (Windows behaviour I could not test from Linux)
 - Main window = `chrome.NativeFrame` (snap=True): a real WS_OVERLAPPEDWINDOW with a subclassed wndproc - WM_NCCALCSIZE
   removes the standard frame, WM_NCHITTEST maps strip -> HTCAPTION, our max button -> HTMAXBUTTON (Snap Layouts), edges -> resize.

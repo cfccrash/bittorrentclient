@@ -1,0 +1,29 @@
+# Maintainer: Bit Torrent Client
+# Arch Linux package of the prebuilt program (made by the release workflow, .github/workflows/build.yml).
+# @VERSION@ and @SHA256@ are filled in when a release is built; the finished PKGBUILD is attached to every release.
+pkgname=bittorrentclient-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="BitTorrent client with streaming, a built-in player, search and RSS (Aurora theme)"
+arch=('x86_64')
+url="https://github.com/cfccrash/bittorrentclient-releases"
+license=('custom')
+depends=('mpv' 'xdg-utils' 'hicolor-icon-theme')
+optdepends=('libnotify: desktop notifications when a download finishes'
+            'xdg-user-dirs: saves player screenshots in your localised Pictures folder')
+provides=('bittorrentclient')
+conflicts=('bittorrentclient')
+options=('!strip' '!debug')
+source=("https://github.com/cfccrash/bittorrentclient-releases/releases/download/v${pkgver}/BitTorrentClient-linux-x86_64-${pkgver}.tar.gz")
+sha256sums=('@SHA256@')
+
+package() {
+    install -d "${pkgdir}/opt/bittorrentclient"
+    cp -a "${srcdir}/BitTorrentClient/." "${pkgdir}/opt/bittorrentclient/"
+    install -Dm755 "${srcdir}/BitTorrentClient/linux/bittorrentclient" "${pkgdir}/usr/bin/bittorrentclient"
+    install -Dm644 "${srcdir}/BitTorrentClient/linux/bittorrentclient.desktop" \
+        "${pkgdir}/usr/share/applications/bittorrentclient.desktop"
+    install -Dm644 "${srcdir}/BitTorrentClient/linux/bittorrentclient.png" \
+        "${pkgdir}/usr/share/icons/hicolor/256x256/apps/bittorrentclient.png"
+    install -Dm644 "${srcdir}/BitTorrentClient/linux/bittorrentclient.png" "${pkgdir}/usr/share/pixmaps/bittorrentclient.png"
+}

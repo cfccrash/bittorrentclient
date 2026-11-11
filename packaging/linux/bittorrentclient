@@ -1,0 +1,3 @@
+#!/bin/sh
+# Starts the packaged program (installed in /opt/bittorrentclient by the Arch package).
+exec /opt/bittorrentclient/BitTorrentClient "$@"

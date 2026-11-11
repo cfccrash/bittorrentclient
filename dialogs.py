@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 import autostart
+import tray
 import queue
 import rss
 import schedule
@@ -700,8 +701,9 @@ class SettingsDialog(_Dialog):
         ttk.Button(box2, text="Browse…", command=self._browse).grid(row=1, column=1, padx=(8, 0), pady=(4, 0))
 
         self.tray = tk.BooleanVar(value=cfg.get("tray", True))
-        ttk.Checkbutton(box2, text="Closing the window keeps running in the system tray", variable=self.tray).grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        if tray.available():                     # (no tray icon on Linux: closing the window quits)
+            ttk.Checkbutton(box2, text="Closing the window keeps running in the system tray", variable=self.tray).grid(
+                row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
         self.notify = tk.BooleanVar(value=cfg.get("notify", True))
         ttk.Checkbutton(box2, text="Show a notification when a download finishes", variable=self.notify).grid(
@@ -710,15 +712,18 @@ class SettingsDialog(_Dialog):
         ttk.Checkbutton(box2, text="Play a sound too", variable=self.notify_sound).grid(
             row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
-        box3 = ttk.LabelFrame(g, text="Windows integration", padding=14)
+        on_windows = os.name == "nt"
+        box3 = ttk.LabelFrame(g, text="Windows integration" if on_windows else "Desktop integration", padding=14)
         box3.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         if autostart.available():
             self.autostart = tk.BooleanVar(value=autostart.is_enabled())
-            ttk.Checkbutton(box3, text="Start Bit Torrent Client when I sign in to Windows (minimised to the tray)",
+            ttk.Checkbutton(box3, text="Start Bit Torrent Client when I sign in to Windows (minimised to the tray)"
+                            if on_windows else "Start Bit Torrent Client when I sign in (minimised)",
                             variable=self.autostart).grid(row=2, column=0, sticky="w", pady=(10, 0))
         self.native_frame = tk.BooleanVar(value=bool(cfg.get("native_frame", False)))
-        ttk.Checkbutton(box3, text="Use the standard Windows title bars instead of the Aurora ones (restart needed)",
-                        variable=self.native_frame).grid(row=3, column=0, sticky="w", pady=(10, 0))
+        if on_windows:                           # (Linux always uses the desktop's own title bars)
+            ttk.Checkbutton(box3, text="Use the standard Windows title bars instead of the Aurora ones (restart needed)",
+                            variable=self.native_frame).grid(row=3, column=0, sticky="w", pady=(10, 0))
         ttk.Button(box3, text="Use Bit Torrent Client for magnet links", command=app.register_magnet).grid(row=0, column=0, sticky="w")
         ttk.Label(box3, text="Clicking a magnet link in your browser will then open it in Bit Torrent Client.",
                   style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
@@ -1246,7 +1251,8 @@ class SettingsDialog(_Dialog):
     def _browse_exe(self):
         from tkinter import filedialog
         p = filedialog.askopenfilename(parent=self, title="Player program (for \"Other player\")",
-                                       filetypes=[("Programs", "*.exe"), ("All files", "*.*")])
+                                       filetypes=[("Programs", "*.exe"), ("All files", "*.*")] if os.name == "nt"
+                                       else [("All files", "*")])
         if p:
             self.player_exe.set(p)
 
@@ -1707,8 +1713,8 @@ def about_content(parent, app, px, padding=(0, 0, 0, 0), close=None):
 
 def _open_data(app):
     try:
-        os.startfile(app.dir)
-    except (AttributeError, OSError):
+        ui.open_path(app.dir)
+    except OSError:
         pass
 
 
@@ -1718,7 +1724,7 @@ def _open_log(parent):
     try:
         if p and not os.path.exists(p):
             open(p, "a").close()
-        os.startfile(p)                   # Windows
+        ui.open_path(p)
     except (AttributeError, OSError, TypeError):
         from tkinter import messagebox
         messagebox.showinfo("Error log", "The error log is here:\n\n%s" % p, parent=parent)
@@ -2035,8 +2041,9 @@ class SearchWindow(tk.Toplevel):
         import search
         d = search.plugin_dir(self.app.dir)
         try:
-            os.startfile(d)           # Windows
-        except AttributeError:
+            if not ui.open_path(d):
+                raise AttributeError(d)
+        except (AttributeError, OSError):
             from tkinter import messagebox
             messagebox.showinfo("Search plugins", "Plugin folder:\n\n" + d, parent=self)
         except OSError:
@@ -2488,8 +2495,8 @@ class Toast(tk.Toplevel):
         sess = self.app.mgr.sessions.get(self.h)
         if sess:
             try:
-                os.startfile(sess.save_dir)
-            except (AttributeError, OSError):
+                ui.open_path(sess.save_dir)
+            except OSError:
                 pass
         self.destroy()
 

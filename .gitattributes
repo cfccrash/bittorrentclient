@@ -1,3 +1,6 @@
 # cmd.exe misreads batch files with LF-only line endings (call :label jumps land mid-line)
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Linux packaging files must keep LF endings (a shell script with CRLF does not run)
+packaging/linux/* text eol=lf

@@ -39,6 +39,84 @@ ICON = dict(play="\uE768", pause="\uE769", stop="\uE71A", prev="\uE892", next="\
             fwd="\uED3D", vol="\uE767", mute="\uE74F", full="\uE740", unfull="\uE73F", subs="\uED1E",
             chapters="\uE8FD", aspect="\uE799", camera="\uE722", mini="\uEE49", detach="\uE8A7", attach="\uEE47")
 PREFS_FILE = "track_prefs.json"
+GLYPH_NAME = {v: k for k, v in ICON.items()}
+
+
+def draw_glyph(cv, name, cx, cy, size, col, bold=False):
+    """The player's icons drawn with lines and shapes - used where the Windows icon fonts are missing (Linux)."""
+    h = size / 2.0
+    w = max(1.5, size / 10.0) * (1.6 if bold else 1.0)
+    L = lambda *pts, **kw: cv.create_line(*pts, fill=col, width=w, capstyle="round", joinstyle="round", **kw)
+    P = lambda *pts: cv.create_polygon(*pts, outline=col, fill="", width=w, joinstyle="round")
+    if name == "play":
+        P(cx - h * .55, cy - h * .8, cx + h * .8, cy, cx - h * .55, cy + h * .8)
+    elif name == "pause":
+        for dx in (-h * .4, h * .4):
+            cv.create_rectangle(cx + dx - h * .15, cy - h * .75, cx + dx + h * .15, cy + h * .75, outline=col, width=w)
+    elif name == "stop":
+        cv.create_rectangle(cx - h * .65, cy - h * .65, cx + h * .65, cy + h * .65, outline=col, width=w)
+    elif name in ("prev", "next"):
+        s = -1 if name == "prev" else 1
+        P(cx - s * h * .55, cy - h * .7, cx + s * h * .45, cy, cx - s * h * .55, cy + h * .7)
+        L(cx + s * h * .7, cy - h * .7, cx + s * h * .7, cy + h * .7)
+    elif name in ("back", "fwd"):
+        s = -1 if name == "back" else 1               # an arc over the number, arrowhead on the leading end
+        ox, oy, rx, ry = cx, cy - h * .05, h * .72, h * .62
+        cv.create_arc(ox - rx, oy - ry, ox + rx, oy + ry, start=15, extent=150, style="arc", outline=col, width=w)
+        ex = ox + s * rx * .966
+        ey = oy - ry * .259
+        L(ex - h * .28, ey - h * .12, ex, ey + h * .14, ex + h * .26, ey - h * .14)
+        cv.create_text(cx, cy + h * .5, text="10" if s < 0 else "30", fill=col,
+                       font=("TkDefaultFont", max(6, int(size * .26)), "bold"))
+    elif name in ("vol", "mute"):
+        P(cx - h * .85, cy - h * .3, cx - h * .45, cy - h * .3, cx - h * .05, cy - h * .7,
+          cx - h * .05, cy + h * .7, cx - h * .45, cy + h * .3, cx - h * .85, cy + h * .3)
+        if name == "vol":
+            for r in (.4, .75):
+                cv.create_arc(cx - h * r, cy - h * r, cx + h * r, cy + h * r, start=-45, extent=90, style="arc",
+                              outline=col, width=w)
+        else:
+            L(cx + h * .25, cy - h * .3, cx + h * .85, cy + h * .3)
+            L(cx + h * .25, cy + h * .3, cx + h * .85, cy - h * .3)
+    elif name in ("full", "unfull"):
+        k = h * .35
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                if name == "full":
+                    x, y = cx + sx * h * .75, cy + sy * h * .75
+                    L(x, y - sy * k, x, y, x - sx * k, y)
+                else:
+                    x, y = cx + sx * h * .25, cy + sy * h * .25
+                    L(x + sx * k, y, x, y, x, y + sy * k)
+    elif name == "subs":
+        cv.create_rectangle(cx - h * .85, cy - h * .6, cx + h * .85, cy + h * .6, outline=col, width=w)
+        L(cx - h * .5, cy + h * .15, cx + h * .1, cy + h * .15)
+        L(cx + h * .3, cy + h * .15, cx + h * .5, cy + h * .15)
+        L(cx - h * .5, cy - h * .15, cx - h * .2, cy - h * .15)
+    elif name == "chapters":
+        for dy in (-.55, 0, .55):
+            cv.create_oval(cx - h * .8 - w, cy + dy * h - w, cx - h * .8 + w, cy + dy * h + w, fill=col, outline="")
+            L(cx - h * .45, cy + dy * h, cx + h * .8, cy + dy * h)
+    elif name == "aspect":
+        cv.create_rectangle(cx - h * .85, cy - h * .6, cx + h * .85, cy + h * .6, outline=col, width=w)
+        L(cx - h * .5, cy - h * .25, cx - h * .5, cy + h * .25)
+        L(cx + h * .5, cy - h * .25, cx + h * .5, cy + h * .25)
+    elif name == "camera":
+        cv.create_rectangle(cx - h * .85, cy - h * .45, cx + h * .85, cy + h * .7, outline=col, width=w)
+        L(cx - h * .3, cy - h * .45, cx - h * .15, cy - h * .75, cx + h * .15, cy - h * .75, cx + h * .3, cy - h * .45)
+        cv.create_oval(cx - h * .32, cy - h * .2, cx + h * .32, cy + h * .44, outline=col, width=w)
+    elif name == "mini":
+        cv.create_rectangle(cx - h * .85, cy - h * .65, cx + h * .85, cy + h * .65, outline=col, width=w)
+        cv.create_rectangle(cx + h * .05, cy + h * .05, cx + h * .6, cy + h * .4, outline=col, fill=col, width=1)
+    elif name in ("detach", "attach"):
+        cv.create_rectangle(cx - h * .8, cy - h * .5, cx + h * .4, cy + h * .8, outline=col, width=w)
+        if name == "detach":
+            L(cx - h * .05, cy + h * .15, cx + h * .8, cy - h * .7)
+            L(cx + h * .25, cy - h * .7, cx + h * .8, cy - h * .7, cx + h * .8, cy - h * .15)
+        else:
+            L(cx + h * .85, cy - h * .75, cx - h * .05, cy + h * .15)
+            L(cx - h * .05, cy - h * .35, cx - h * .05, cy + h * .15, cx + h * .45, cy + h * .15)
+
 
 
 def _mix(a, b, t):
@@ -262,6 +340,9 @@ class PlayerPanel:
                  ("j", "seek -10"), ("k", "cycle pause"), ("l", "seek 10"), ("S", "script-message tk-shot"),
                  ("Z", "add audio-delay -0.1"), ("X", "add audio-delay 0.1")] + \
                 [(str(n), "seek %d absolute-percent" % (n * 10)) for n in range(10)]
+        if sys.platform != "win32":       # on X11 mpv's video window does get the mouse (Tk never sees those clicks)
+            binds += [("MBTN_LEFT", "cycle pause"), ("MBTN_LEFT_DBL", "script-message tk-fs"),
+                      ("WHEEL_UP", "add volume 5"), ("WHEEL_DOWN", "add volume -5")]
         for key, cmd in binds:
             try:
                 self.mpv.command("keybind", key, cmd)
@@ -293,11 +374,14 @@ class PlayerPanel:
         self.video.bind("<Double-Button-1>", lambda e: self.fullscreen())
         self.video.bind("<MouseWheel>", lambda e: (self.vol.set(self.vol.get() + (5 if e.delta > 0 else -5)), self._wake()))
         families = set(tkfont.families(p))
-        self.f_icon = tkfont.Font(p, family=next((f for f in ICON_FONTS if f in families), "Segoe UI Symbol"), size=13)
-        self.f_big = tkfont.Font(p, family=self.f_icon.actual("family"), size=17)
-        self.f_ui = tkfont.Font(p, family="Segoe UI", size=10)
-        self.f_bold = tkfont.Font(p, family="Segoe UI", size=10, weight="bold")
-        self.f_small = tkfont.Font(p, family="Segoe UI", size=8)
+        icon_family = next((f for f in ICON_FONTS if f in families), None)
+        self.vector_icons = icon_family is None             # no Windows icon font (Linux): draw the icons instead
+        ui_family = "Segoe UI" if "Segoe UI" in families else tkfont.nametofont("TkDefaultFont").actual("family")
+        self.f_icon = tkfont.Font(p, family=icon_family or ui_family, size=13)
+        self.f_big = tkfont.Font(p, family=icon_family or ui_family, size=17)
+        self.f_ui = tkfont.Font(p, family=ui_family, size=10)
+        self.f_bold = tkfont.Font(p, family=ui_family, size=10, weight="bold")
+        self.f_small = tkfont.Font(p, family=ui_family, size=8)
         # A borderless strip above mpv's native video window, slightly see-through: Tk widgets cannot sit *on* the
         # video, but a window of its own can. It never takes the keyboard focus (WS_EX_NOACTIVATE).
         osd = self.osd = tk.Toplevel(p)
@@ -496,9 +580,12 @@ class PlayerPanel:
         lit = self._hot is not None and self._hot.get("key") == key
         f = self.f_big if big else self.f_icon
         col = "#ffffff" if lit else FG
-        cv.create_text(x + bw // 2, cy, text=glyph, font=f, fill=col)
-        if lit:                                                   # icons have no bold: draw it twice, 1 px apart
-            cv.create_text(x + bw // 2 + 1, cy, text=glyph, font=f, fill=col)
+        if self.vector_icons:
+            draw_glyph(cv, GLYPH_NAME.get(glyph, key), x + bw // 2, cy, px(26) if big else px(20), col, bold=lit)
+        else:
+            cv.create_text(x + bw // 2, cy, text=glyph, font=f, fill=col)
+            if lit:                                               # icons have no bold: draw it twice, 1 px apart
+                cv.create_text(x + bw // 2 + 1, cy, text=glyph, font=f, fill=col)
         self._items.append(dict(key=key, box=(x, cy - px(18), x + bw, cy + px(18)), cmd=cmd, tip=tip))
 
     def _text_btn(self, key, text, cmd, tip, x, cy, bw):
@@ -901,7 +988,11 @@ class PlayerPanel:
         """Save the current frame (with subtitles) as a PNG in Pictures\\Bit Torrent Client."""
         if not self.mpv or not self.cur:
             return
-        d = os.path.join(os.path.expanduser("~"), "Pictures", "Bit Torrent Client")
+        pics = os.path.join(os.path.expanduser("~"), "Pictures")
+        if sys.platform.startswith("linux"):
+            import linux
+            pics = linux.pictures_dir()
+        d = os.path.join(pics, "Bit Torrent Client")
         try:
             os.makedirs(d, exist_ok=True)
             name = re.sub(r'[\\/:*?"<>|]+', "_", self.cur.get("title") or "frame")[:80]
