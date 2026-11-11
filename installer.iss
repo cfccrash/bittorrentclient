@@ -109,13 +109,15 @@ begin
   Log('Bit Torrent Client is running: asking it to quit');
   if FileExists(Exe) then
     Exec(Exe, '--quit', '', SW_HIDE, ewWaitUntilTerminated, Code);
-  for I := 1 to 24 do begin            // up to 12 s: it tells the trackers it is stopping, then saves
+  for I := 1 to 40 do begin            // up to 20 s: it tells the trackers it is stopping, then saves
     if not AppRunning() then
       Exit;
     Sleep(500);
   end;
+  // No /T: this installer was started by the app (automatic update), so /T would kill the installer too.
+  // /IM already covers detached player windows (same program).
   Log('Still running: stopping it (and any detached player windows)');
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#MyAppExe}', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExe}', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Sleep(700);
 end;
 

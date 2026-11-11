@@ -104,7 +104,8 @@ def all_users():
 
 
 def install_command(path, relaunch=True):
-    cmd = [path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/ALLUSERS" if all_users() else "/CURRENTUSER"]
+    cmd = [path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/ALLUSERS" if all_users() else "/CURRENTUSER",
+           "/LOG=" + os.path.join(os.path.dirname(os.path.abspath(path)), "install.log")]   # next to the download
     return cmd + (["/RELAUNCH=1"] if relaunch else [])
 
 

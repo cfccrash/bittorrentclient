@@ -198,6 +198,7 @@ def main():
     cmd = updater.install_command(path)
     assert cmd[0] == path and "/SILENT" in cmd and "/RELAUNCH=1" in cmd and ("/ALLUSERS" in cmd or "/CURRENTUSER" in cmd)
     assert "/RELAUNCH=1" not in updater.install_command(path, relaunch=False)
+    assert any(c.startswith("/LOG=") and c.endswith("install.log") for c in cmd), cmd
     assert updater.can_self_update() is False, "running from source never self-updates"
     print("automatic updates: release parsing, verified download, tamper / host checks, installer command: OK")
     print("FEATURE TESTS: ALL PASSED")

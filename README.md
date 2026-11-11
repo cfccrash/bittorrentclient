@@ -491,6 +491,10 @@ downloaded yet waits for it instead of failing.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
 
+### 1.9.46 - Updates install again
+- **Fixed:** an automatic update could stop at "Preparing to Install" and close without updating. When trackers did not answer, the app took too long to exit after saying goodbye to them (1.9.44 made this worse by also trying IPv6). The installer then had to force it closed, and that also closed the installer. The app now exits within a few seconds whatever the trackers do, and the installer waits longer and no longer closes itself.
+- The updater keeps a log of each installation (`install.log` in the updates folder) to make any future update problem easy to find.
+
 ### 1.9.45 - Flags for IPv6 peers
 - IPv6 peers now show their country and flag in the Peers tab, like IPv4 peers. The bundled DB-IP Lite data now includes IPv6 address ranges (still looked up offline on your PC).
 

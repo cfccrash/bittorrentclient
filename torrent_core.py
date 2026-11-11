@@ -1003,8 +1003,7 @@ class Session:
         self.storage.close()
         if announce and self.t.trackers:
             loop = asyncio.get_running_loop()
-            futs = [loop.run_in_executor(None, self._announce_blocking, u, "stopped")
-                    for u in self.t.trackers]
+            futs = [_in_daemon(loop, self._announce_blocking, u, "stopped") for u in self.t.trackers]
             try:
                 await asyncio.wait_for(asyncio.gather(*futs, return_exceptions=True), 4)
             except asyncio.TimeoutError:
@@ -1371,8 +1370,7 @@ class Session:
                 event, self.pending_event = self.pending_event, ""
             interval = 1800
             if self.t.trackers:
-                futs = [loop.run_in_executor(None, self._announce_blocking, u, event)
-                        for u in self.t.trackers]
+                futs = [_in_daemon(loop, self._announce_blocking, u, event) for u in self.t.trackers]
                 results = await asyncio.gather(*futs, return_exceptions=True)
                 got = False
                 now = time.time()
@@ -1454,7 +1452,7 @@ class Session:
             qs += "&event=" + event
         full = url + ("&" if "?" in url else "?") + qs
         req = urllib.request.Request(full, headers={"User-Agent": "BitTorrentClient/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=4 if event == "stopped" else 15) as resp:
             d = bdecode(resp.read())
         if b"failure reason" in d:
             raise RuntimeError(d[b"failure reason"].decode("utf-8", "replace"))
@@ -1497,7 +1495,7 @@ class Session:
 
     def _udp_announce_to(self, family, addr, event):
         sock = socket.socket(family, socket.SOCK_DGRAM)
-        sock.settimeout(8)
+        sock.settimeout(2 if event == "stopped" else 8)   # "stopped" is a courtesy: never hold up quitting
         try:
             tid = random.getrandbits(32)
             sock.sendto(struct.pack(">QII", 0x41727101980, 0, tid), addr)
@@ -1735,6 +1733,31 @@ def ipv6_address():
         return a if ipaddress.IPv6Address(a).is_global else None
     except (OSError, ValueError):
         return None
+
+
+def _in_daemon(loop, fn, *args):
+    """Run a blocking call (a tracker announce) on a daemon thread; returns an asyncio future.
+    Not the loop's default executor: Python waits for executor threads at exit, so a dead tracker
+    (8-16 s per address family) kept the process alive after quitting - and the update installer,
+    tired of waiting, force-closed it together with itself."""
+    fut = loop.create_future()
+
+    def done(res, exc):
+        if not fut.done():
+            fut.set_exception(exc) if exc is not None else fut.set_result(res)
+
+    def run():
+        try:
+            res, exc = fn(*args), None
+        except BaseException as e:      # handed to the awaiting coroutine
+            res, exc = None, e
+        try:
+            loop.call_soon_threadsafe(done, res, exc)
+        except RuntimeError:            # the loop is closed: nobody is waiting any more
+            pass
+
+    threading.Thread(target=run, daemon=True, name="announce").start()
+    return fut
 
 
 def _is_v6(ip):

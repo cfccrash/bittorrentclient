@@ -1,5 +1,5 @@
 """Loopback self-test: seed -> download -> verify -> corrupt -> re-check."""
-import hashlib, os, random, shutil, tempfile, time
+import hashlib, os, random, sys, shutil, tempfile, time
 import queue, base64, threading
 from torrent_core import Manager, make_torrent, bdecode, bencode, Torrent, parse_magnet
 import single_instance
@@ -846,6 +846,36 @@ def main():
         dm.rescan()
         assert dm.backend is None and any("re-scan" in l for l in dm.log)
         print("router discovery hardening (tolerant XML, gateway guess, diagnostics, rescan): OK")
+
+        # -- quitting is not held up by trackers that never answer (the update installer gives up after 20 s)
+        import subprocess as _sp
+        quit_script = r"""
+import os, socket, sys, tempfile, threading, time, http.server
+sys.path.insert(0, %r)
+from torrent_core import Manager, make_torrent, bencode, bdecode
+d = tempfile.mkdtemp(); open(os.path.join(d, "f.bin"), "wb").write(os.urandom(70000))
+mute = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+for u in mute: u.bind(("127.0.0.1", 0))          # UDP trackers that never reply
+class Slow(http.server.BaseHTTPRequestHandler):
+    def do_GET(self): time.sleep(30)
+    def log_message(self, *a): pass
+h = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow); h.daemon_threads = True
+threading.Thread(target=h.serve_forever, daemon=True).start()
+urls = ["udp://127.0.0.1:%%d/announce" %% u.getsockname()[1] for u in mute] + ["http://127.0.0.1:%%d/announce" %% h.server_port]
+meta = bdecode(make_torrent(os.path.join(d, "f.bin"), 16384, announce=urls[0]))
+meta[b"announce-list"] = [[u.encode()] for u in urls]
+data = bencode(meta)
+m = Manager(0, dht=False)
+m.add(data, d)
+time.sleep(3)                                   # the "started" announces are now stuck too
+t0 = time.time(); m.shutdown(); print("shutdown %%.1f" %% (time.time() - t0), flush=True)
+""" % os.path.dirname(os.path.abspath(__file__))
+        t0 = time.time()
+        out = _sp.run([sys.executable, "-c", quit_script], capture_output=True, text=True, timeout=90)
+        took = time.time() - t0
+        assert out.returncode == 0, out.stderr[-2000:]
+        assert took < 12, "process took %.1fs to exit (%s)" % (took, out.stdout.strip())
+        print("quitting with dead trackers: process gone in %.1fs (%s): OK" % (took, out.stdout.strip()))
 
         # =================== IPv6 ===================
         import torrent_core as TC

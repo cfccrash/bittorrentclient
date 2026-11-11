@@ -10,6 +10,9 @@ Current version is in `version.py`; release notes are the sections at the bottom
   A failing test's last lines are printed and its full output saved to `test_logs/` (run_tests sets BTC_TRACEBACKS so crashlog echoes errors).
   Windows: network filters (AdGuard) drop the first UDP packet per socket and reset ~5% of loopback TCP -> random failures in
   test_local / test_real / test_cast / test_rss. Pause them before trusting a red run; `netcheck.check()` tells you.
+- Tracker announces run on daemon threads (`_in_daemon`), never the loop's default executor: Python joins executor
+  threads at exit, so dead trackers kept the process alive and the installer's taskkill (no /T: the installer is the
+  app's child during an automatic update) had to step in. test_local checks exit time with mute trackers.
 - Updates: `updater.py` reads releases of the PUBLIC repo `updater.RELEASES_REPO` (the source repo is private); CI publishes
   there on `v*` tags with the `RELEASES_TOKEN` secret. Installer flags: `/RELAUNCH=1` restarts the app after a silent update.
 - Build: `build.bat` (PyInstaller onedir + Inno Setup; bundles/downloads libmpv via `libmpv_get.py`). CI: `.github/workflows/build.yml`.
