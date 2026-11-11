@@ -459,3 +459,6 @@ downloaded yet waits for it instead of failing.
 - **Remembers your choices:** the audio and subtitle language you pick are used again for the next episodes of the same series.
 - **Audio delay** (Shift+Z / Shift+X, or the subtitles & audio menu) for sound out of sync, and a **night mode** that evens out loud and quiet parts.
 - **Mini player:** a small always-on-top window in the corner of the screen with just the essential controls; the same button makes it big again, and Attach brings it back into the Player tab.
+
+### 1.9.41
+- Player: the buttons (mini player, full screen, play ...) now respond to every click. A click was ignored whenever the controls redrew themselves between pressing and releasing the mouse button, which happens several times a second while a video plays.

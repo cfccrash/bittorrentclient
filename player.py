@@ -542,8 +542,11 @@ class PlayerPanel:
         d, self._drag = self._drag, None
         self.seeking = False
         down, self._down = self._down, None
-        if d is None and down is not None and self._item_at(e.x, e.y) is down and down.get("cmd"):
-            down["cmd"]()
+        # compare by name: the strip is redrawn several times a second while playing, and each redraw makes new
+        # item records - an identity check dropped every click that had a redraw between press and release
+        it = self._item_at(e.x, e.y)
+        if d is None and down is not None and it is not None and it["key"] == down["key"] and it.get("cmd"):
+            it["cmd"]()
         self._redraw()
 
     def _vol_at(self, x):

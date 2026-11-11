@@ -65,6 +65,11 @@ def step(n=[0]):
         pn._redraw()
         lft, rgt = pn._layout(pn.px(1600)); out["controls"] = {x[0] for x in lft + rgt}      # full-size strip
         lft, rgt = pn._layout(pn.px(480)); out["mini_controls"] = {x[0] for x in lft + rgt}  # the mini player's
+        # a click whose press and release have a redraw in between (the strip redraws while playing) still works
+        before = pn.mpv.get_flag("pause"); x0, y0, x1, y1 = next(i for i in pn._items if i["key"] == "play")["box"]
+        ev = type("E", (), {"x": (x0 + x1) // 2, "y": (y0 + y1) // 2})()
+        pn._cv_press(ev); pn._redraw(); pn._cv_release(ev); out["click"] = pn.mpv.get_flag("pause") != before
+        pn._cv_press(ev); pn._redraw(); pn._cv_release(ev)
         pn.sub_delay(0.1); pn.sub_scale(0.1)
         pn.audio_delay(0.2); out["adelay"] = round(pn.mpv.get_double("audio-delay"), 1)
         pn.set_night(True); out["night"] = "dynaudnorm" in (pn.mpv.get("af") or ""); pn.set_night(False)
@@ -103,6 +108,7 @@ assert 55 < out["dur"] < 65 and out["resumed"] >= 30 and out["menu"] >= 9, out
 assert out["chapters"] == 2 or not FFMPEG, out
 assert {"play", "stop", "prev", "next", "back", "fwd", "full", "mini", "tracks", "chap", "speed", "shot", "aspect"} <= out["controls"], out
 assert out["mini_controls"] == {"play", "back", "fwd", "full", "mini", "tracks"}, out
+assert out["click"], out
 assert out["speed"] == "2x" and out["adelay"] == 0.2 and out["night"] and out["vol"] == 50 and 25 <= out["pct"] <= 35, out
 assert out["prefs"].get("sub") == {"off": True} and "Picture saved" in out["shot"] and out["shot_file"], out
 assert out["idx"] == 1 and out["title"] == "Show S01E02" and out["paused"] and out["sid"] == "no", out
