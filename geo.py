@@ -1,4 +1,4 @@
-"""Where in the world is a peer? IPv4 -> country (offline, DB-IP Lite data) plus small national flag images.
+"""Where in the world is a peer? IPv4 / IPv6 -> country (offline, DB-IP Lite data) plus small national flag images.
 
 IP data: DB-IP Lite country database, https://db-ip.com (CC BY 4.0).  Flags: flag-icons (MIT).
 Country is the registered location of the address block: accurate for most users, but VPNs, CDNs and
@@ -10,32 +10,37 @@ import socket
 import struct
 import zlib
 
-_starts = _vals = None
+_tables = {}
 _images = {}
+# places in the IP data that flags_data has no entry for
+_EXTRA_NAMES = {"CX": "Christmas Island", "EH": "Western Sahara", "TF": "French Southern Territories"}
 
 
-def _load():
-    global _starts, _vals
-    if _starts is None:
+def _load(v6=False):
+    """(range starts, country index per range) for IPv4, or for IPv6 by /64 prefix."""
+    if v6 not in _tables:
         import geo_data
-        raw = zlib.decompress(base64.b64decode(geo_data.BLOB))
-        n = geo_data.COUNT
-        _starts = struct.unpack(">%dI" % n, raw[:4 * n])
-        _vals = raw[4 * n:]
-    return _starts, _vals
+        blob, n, size, fmt = ((geo_data.BLOB6, geo_data.COUNT6, 8, "Q") if v6 else
+                              (geo_data.BLOB, geo_data.COUNT, 4, "I"))
+        raw = zlib.decompress(base64.b64decode(blob))
+        _tables[v6] = (struct.unpack(">%d%s" % (n, fmt), raw[:size * n]), raw[size * n:])
+    return _tables[v6]
 
 
 def country(ip):
-    """Two-letter country code for an IPv4 address string, or None (private / unknown / not IPv4)."""
+    """Two-letter country code for an IPv4 or IPv6 address string, or None (private / unknown / not an address)."""
     try:
-        addr = ipaddress.IPv4Address(ip)
-    except ValueError:
+        addr = ipaddress.ip_address(ip.strip("[]"))
+    except (ValueError, AttributeError):
         return None
-    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_reserved:
+    if addr.version == 6 and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    if not addr.is_global or addr.is_multicast:
         return None
     import geo_data
-    starts, vals = _load()
-    i = bisect.bisect_right(starts, int(addr)) - 1
+    v6 = addr.version == 6
+    starts, vals = _load(v6)
+    i = bisect.bisect_right(starts, int(addr) >> 64 if v6 else int(addr)) - 1
     if i < 0 or vals[i] >= len(geo_data.CODES):
         return None
     return geo_data.CODES[vals[i]]
@@ -43,7 +48,7 @@ def country(ip):
 
 def name(code):
     import flags_data
-    return flags_data.NAMES.get(code, code or "")
+    return flags_data.NAMES.get(code) or _EXTRA_NAMES.get(code) or code or ""
 
 
 def flag_image(code, hidpi=False):

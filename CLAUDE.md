@@ -22,7 +22,8 @@ Current version is in `version.py`; release notes are the sections at the bottom
 - UI: `bittorrentclient.py` (App), `dialogs.py` (dialogs, SearchWindow, themed MessageDialog), `ui.py` (palettes LIGHT/DARK="Aurora", ttk styles, Tooltip),
   `chrome.py` (frameless windows with own title strip/resize grips), `assets_ui.py` (embedded banner/backdrop PNGs), `panels.py`, `tray.py`, `dnd.py`.
 - Flags: `flags_data.FLAGS` (20x15 / 40x30 PNGs). 194 come from a WeasyPrint PDF of Noto emoji flags via `tools/flags_from_pdf.py`
-  (re-run it after `tools/build_geo.py`, which would put the flat flag-icons back).
+  (re-run it after `tools/build_geo.py` without `--ip-only`, which would put the flat flag-icons back).
+  `geo_data`: BLOB (IPv4 starts, >I) + BLOB6 (IPv6 /64 prefixes, >Q) sharing CODES; `geo.country` takes either.
 - Artwork: `assets_ui.BACKDROP_WIDE` (dark, paletted PNG) and `BACKDROP_WIDE_LIGHT` (made from it by `tools/make_light_backdrop.py`), picked by `App._art()`.
 - Main list + details tables are `arttable.ArtTable` (Canvas drawn over the aurora, Treeview-like API). Its `delete/move/index/bbox/insert` are the
   Treeview row methods, shadowing Canvas ones: inside it use `tk.Canvas.delete(self, ...)` for canvas items. Details pane art = `App._draw_art(c)`.

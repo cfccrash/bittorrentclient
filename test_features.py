@@ -51,6 +51,11 @@ def main():
     assert geo.country("81.2.69.142") == "GB" and geo.country("8.8.8.8") == "US" and geo.country("200.160.2.3") == "BR"
     assert geo.country("192.168.0.9") is None and geo.country("127.0.0.1") is None and geo.country("2001:db8::1") is None
     assert geo.country("junk") is None and geo.name("GB") == "United Kingdom" and geo.name(None) == ""
+    # IPv6 (by /64 prefix): Google's Frankfurt block, a UK ISP; bracketed form; IPv4-mapped; non-global ranges
+    assert geo.country("2a00:1450:4001::1") == "DE" and geo.country("2a02:c7c::1") == "GB", geo.country("2a02:c7c::1")
+    assert geo.country("[2a00:1450:4001::1]") == "DE" and geo.country("::ffff:81.2.69.142") == "GB"
+    assert all(geo.country(x) is None for x in ("::1", "fe80::1", "fd00::1", "ff02::1", "::"))
+    assert geo.flag_image is not None and geo.name("EH") == "Western Sahara"
     import flags_data, zlib, base64
     assert flags_data.FLAGS["GB"] and zlib.decompress(base64.b64decode(flags_data.FLAGS["GB"][0]))[:4] == b"\x89PNG"
     print("peer country lookup (offline IPv4 -> country, flags, private ranges ignored): OK")

@@ -189,11 +189,11 @@ Click **RSS feeds** in the left column. *Add feed* takes the feed address (RSS 2
 Peer handling is also smarter: while downloading, the peers that send you the most are the ones you upload to (plus one rotating "optimistic" slot so newcomers get a chance); while seeding, the peers that take the most; peers that unchoke you but send nothing for 30 s are dropped, and when the peer list is nearly full the slowest useless connections make room for new ones.
 
 ## Peer locations
-The **Peers** tab shows a national flag and country name for every peer, looked up offline from a bundled IPv4 database
-(no network requests, nothing about your peers leaves your PC). Private / LAN addresses show "Local / unknown", IPv6 peers show "IPv6". The country is
+The **Peers** tab shows a national flag and country name for every peer, looked up offline from a bundled IPv4 / IPv6 database
+(no network requests, nothing about your peers leaves your PC). Private / LAN addresses show "Local / unknown" (an IPv6 address with no known country shows "IPv6"). The country is
 where the address block is registered, so VPN, proxy and CDN peers can appear in another country. IP data: DB-IP Lite country
 database by [DB-IP.com](https://db-ip.com) (CC BY 4.0); flags from [flag-icons](https://github.com/lipis/flag-icons) (MIT).
-Refresh the data with `python3 tools/build_geo.py` (needs npm and rsvg-convert).
+Refresh the data with `python3 tools/build_geo.py --ip-only` (needs npm; without `--ip-only` it also rebuilds the flags, which needs rsvg-convert).
 
 ## Search online
 **Search online** (sidebar, Ctrl+Shift+F) opens a search window: choose a source, type a query, double-click a result and it
@@ -490,6 +490,9 @@ downloaded yet waits for it instead of failing.
 - Player keys work again: in the Player tab they now act whenever that tab is showing (not only when the keyboard happened to be inside it), and not while you type in a text box or in another window's dialog.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
+
+### 1.9.45 - Flags for IPv6 peers
+- IPv6 peers now show their country and flag in the Peers tab, like IPv4 peers. The bundled DB-IP Lite data now includes IPv6 address ranges (still looked up offline on your PC).
 
 ### 1.9.44 - IPv6
 - **IPv6 connections:** when your Internet connection has IPv6, the client now also listens and connects over it (TCP and uTP), and finds IPv6 peers through trackers, peer exchange and an IPv6 DHT. Many home connections reach IPv6 peers directly, without the router's port forwarding, so you meet more peers and more of them can connect to you. On a real swarm about half the peers and the data came over IPv6.
