@@ -118,4 +118,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           repo=$(python -c "import updater; print(updater.RELEASES_REPO)")
-          gh release upload "${{ github.ref_name }}" BitTorrentClient-linux-x86_64-*.tar.gz PKGBUILD --repo "$repo" --clobber
+          # also under a fixed name, so .../releases/latest/download/BitTorrentClient-linux-x86_64.tar.gz never changes
+          cp BitTorrentClient-linux-x86_64-*.tar.gz BitTorrentClient-linux-x86_64.tar.gz
+          gh release upload "${{ github.ref_name }}" BitTorrentClient-linux-x86_64-*.tar.gz BitTorrentClient-linux-x86_64.tar.gz \
+            PKGBUILD --repo "$repo" --clobber
