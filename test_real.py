@@ -119,9 +119,13 @@ def main():
         # peer flags in the Peers tab
         assert app._geo("81.2.69.142:6881") == "GB" and app._geo("10.0.0.2:1") is None
         tv = app.tab_trees["Peers"]
-        app._sync_rows(tv, [("1", ("81.2.69.142:1", "United Kingdom", "x", "E", "0%", "-", "-"), geo.flag_image("GB")),
-                            ("2", ("10.0.0.2:1", "Local / unknown", "x", "E", "0%", "-", "-"), None)])
+        app._sync_rows(tv, [("1", ("81.2.69.142:1", "IPv4", "United Kingdom", "x", "E", "0%", "-", "-"), geo.flag_image("GB")),
+                            ("2", ("10.0.0.2:1", "IPv4", "Local / unknown", "x", "E", "0%", "-", "-"), None)])
         assert tv.item("1", "image") and not tv.item("2", "image")
+        # a whole IPv6 address and port fits the Address column (nothing cut off)
+        longest = "[2001:4c4e:22c5:f100:d5a1:93ff:fe2b:7c10]:51413"   # a real one, as wide as they get
+        assert tv.column("addr", "width") - 16 >= app.F.ui.measure(longest), (tv.column("addr", "width"), app.F.ui.measure(longest))
+        assert tv.cols[:3] == ["addr", "net", "country"], tv.cols
         # ---- 1.4: log tab, file priority, in-order, peer menu, alt speed, settings, about, disk space
         folder = os.path.join(tmp, "Multi"); os.makedirs(folder)
         for n in ("e1.bin", "e2.bin", "e3.bin"):
@@ -161,7 +165,7 @@ def main():
         # peer menu: copy + ban
         app.tabs.select(app.tabs.index(app.tab_trees["Peers"].master)); root.update()
         ptv = app.tab_trees["Peers"]
-        app._sync_rows(ptv, [("9", ("81.2.69.142:6881", "United Kingdom", "x", "E", "0%", "-", "-"), None)])
+        app._sync_rows(ptv, [("9", ("81.2.69.142:6881", "IPv4", "United Kingdom", "x", "E", "0%", "-", "-"), None)])
         ptv.selection_set(("9",))
         app.copy_peer(); assert root.clipboard_get() == "81.2.69.142:6881"
         with mock.patch.object(B.messagebox, "askyesno", return_value=False):

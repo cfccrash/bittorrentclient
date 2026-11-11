@@ -476,7 +476,8 @@ class App:
 
     # -- peers ------------------------------------------------------------
     def ban_peer(self, addr):
-        ip = addr.rsplit(":", 1)[0]
+        ip = addr.rsplit(":", 1)[0].strip("[]")       # 'ip:port' or '[ipv6]:port'
+
         self.mgr.ban(ip)
         self.log("Banned peer %s" % ip)
         self.save()
@@ -990,7 +991,8 @@ class App:
         for title, cols in (
                 ("Files", (("name", "Name", 380, True), ("size", "Size", 90, False), ("done", "Done", 70, False),
                            ("want", "Priority", 90, False))),
-                ("Peers", (("addr", "Address", 170, False), ("country", "Country", 170, True), ("client", "Client", 160, False),
+                ("Peers", (("addr", "Address", 170, False), ("net", "IP", 56, False),
+                           ("country", "Country", 170, True), ("client", "Client", 160, False),
                            ("flags", "Flags", 60, False),
                            ("done", "Done", 60, False), ("down", "Down", 90, False), ("up", "Up", 90, False))),
                 ("Trackers", (("url", "Tracker", 420, True), ("status", "Status", 260, False),
@@ -1006,6 +1008,9 @@ class App:
                 tv.heading("#0", text="", anchor="w")
                 tv.column("#0", width=self.px(44), minwidth=self.px(44), stretch=False, anchor="w")
             for cid, head, width, stretch in cols:
+                if cid == "addr":       # room for the longest IPv6 address and port, in the font actually used
+                    width = max(width, (self.F.ui.measure("[dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd]:65535") + self.px(24))
+                                / self.scale)
                 tv.heading(cid, text=head, anchor="w")
                 tv.column(cid, width=self.px(width), minwidth=self.px(40), anchor="w", stretch=stretch)
             sb = ttk.Scrollbar(f, orient="vertical", command=tv.yview)
@@ -1247,7 +1252,8 @@ class App:
                 dt = max(now - t0, 0.5)
                 seen[k] = (p["rx"], p["tx"], now) if now - t0 >= 0.9 else prev.get(k, (p["rx"], p["tx"], now))
                 code = self._geo(p["addr"])
-                rows.append((str(k), (p["addr"], geo.name(code) if code else ("IPv6" if p["addr"].startswith("[") else "Local / unknown"), p["client"], p["flags"],
+                rows.append((str(k), (p["addr"], "IPv6" if p["addr"].startswith("[") else "IPv4",
+                                      geo.name(code) if code else "Local / unknown", p["client"], p["flags"],
                                       "%d%%" % int(p["progress"] * 100),
                                       fmt_rate((p["rx"] - rx0) / dt), fmt_rate((p["tx"] - tx0) / dt)),
                              geo.flag_image(code, self.scale >= 1.5) if code else None))
@@ -1701,7 +1707,7 @@ class App:
         addr = self._selected_peer_addr()
         if not addr:
             return
-        ip = addr.rsplit(":", 1)[0]
+        ip = addr.rsplit(":", 1)[0].strip("[]")
         if messagebox.askyesno(APP, "Ban %s?\n\nThis address is disconnected now and refused from then on. You can "
                                     "undo it in Settings > Connection > Banned peers." % ip, parent=self.root):
             self.ban_peer(addr)

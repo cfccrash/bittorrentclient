@@ -491,6 +491,11 @@ downloaded yet waits for it instead of failing.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
 
+### 1.9.49 - Accurate speeds, whole IPv6 addresses in the Peers tab
+- **Fixed: download and upload speeds were shown too high**, by about a quarter on a fast download (14.5 MB/s shown while 11.5 MB/s arrived). The speed was worked out once a second assuming exactly one second had passed, but a busy client checks a little late. It now uses the time that really passed: on the same download it showed 12.00 MB/s for 12.01 MB/s received. ETAs are more accurate too. (Speeds are in binary units like other clients: 1 MB/s = 1,048,576 bytes per second, about 8.4 Mbit/s.)
+- The Peers tab's Address column is now wide enough for a whole IPv6 address and its port (they were cut off), and a new **IP** column next to it says whether each connection is IPv4 or IPv6.
+- **Fixed:** banning an IPv6 peer from the Peers tab now really bans it (the address was stored with its [brackets], so it never matched).
+
 ### 1.9.48 - IPv6 firewall, snapping player without a title bar, old update installers removed
 (1.9.47 was never published: its build stopped at a test that needed IPv6 Internet on the build machine.)
 - **The detached player and the mini player have no title bar any more**: just the picture. Drag the picture to move the window (a plain click still plays / pauses, a double-click goes full screen), drag its edges to resize it, and close it with the new ✕ at the right end of the controls (or Alt+F4). In the narrow mini player the time display shortens instead of running into the buttons.

@@ -1275,10 +1275,11 @@ class Session:
                 p.am_choking = True
                 p.send(0)
 
-    def update_rates(self):
+    def update_rates(self, dt=1.0):
+        """Per-peer bytes/s over the last `dt` seconds (smoothed)."""
         for p in list(self.peers):
-            p.rate_in = 0.6 * p.rate_in + 0.4 * (p.rx_total - p._rx_seen)
-            p.rate_out = 0.6 * p.rate_out + 0.4 * (p.tx_total - p._tx_seen)
+            p.rate_in = 0.6 * p.rate_in + 0.4 * (p.rx_total - p._rx_seen) / dt
+            p.rate_out = 0.6 * p.rate_out + 0.4 * (p.tx_total - p._tx_seen) / dt
             p._rx_seen, p._tx_seen = p.rx_total, p.tx_total
 
     def churn(self, now=None):
@@ -1297,13 +1298,18 @@ class Session:
     # -- background tasks -------------------------------------------------
     async def tick(self):
         last_d, last_u, n = self.downloaded, self.uploaded, 0
+        last_t = time.monotonic()
         while True:
             await asyncio.sleep(1)
             n += 1
-            self.down_rate = 0.6 * self.down_rate + 0.4 * (self.downloaded - last_d)
-            self.up_rate = 0.6 * self.up_rate + 0.4 * (self.uploaded - last_u)
+            # bytes per second of REAL time: a busy loop wakes this late (1.1 - 1.5 s while downloading fast), and
+            # counting that as one second overstated the speed by about a quarter
+            now_t = time.monotonic()
+            dt, last_t = max(now_t - last_t, 0.05), now_t
+            self.down_rate = 0.6 * self.down_rate + 0.4 * (self.downloaded - last_d) / dt
+            self.up_rate = 0.6 * self.up_rate + 0.4 * (self.uploaded - last_u) / dt
             last_d, last_u = self.downloaded, self.uploaded
-            self.update_rates()
+            self.update_rates(dt)
             now = time.time()
             for p in list(self.peers):  # peer exchange (BEP 11)
                 if p.ut_pex and now >= p.next_pex:

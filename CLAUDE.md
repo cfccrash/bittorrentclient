@@ -10,6 +10,9 @@ Current version is in `version.py`; release notes are the sections at the bottom
   A failing test's last lines are printed and its full output saved to `test_logs/` (run_tests sets BTC_TRACEBACKS so crashlog echoes errors).
   Windows: network filters (AdGuard) drop the first UDP packet per socket and reset ~5% of loopback TCP -> random failures in
   test_local / test_real / test_cast / test_rss. Pause them before trusting a red run; `netcheck.check()` tells you.
+- Rates (`Session.tick`, `update_rates(dt)`) divide by the real elapsed time: the 1 s tick wakes 1.1-1.5 s late
+  under load (it overstated speeds by ~26%). test_local stretches the tick to check it. A loopback uTP transfer
+  occasionally falls back to TCP late in a full test_local run (not reproducible alone, also on 1.9.43).
 - Tracker announces run on daemon threads (`_in_daemon`), never the loop's default executor: Python joins executor
   threads at exit, so dead trackers kept the process alive and the installer's taskkill (no /T: the installer is the
   app's child during an automatic update) had to step in. test_local checks exit time with mute trackers.

@@ -3,10 +3,11 @@ Needs: npm (and rsvg-convert for the flags). Run from the project folder:  pytho
   - IP ranges:  npm @ip-location-db/dbip-country   (DB-IP Lite, CC BY 4.0, https://db-ip.com)
   - Flags:      npm flag-icons                     (MIT, https://github.com/lipis/flag-icons)
 --ip-only rebuilds geo_data.py alone: flags_data.py keeps the flags made by tools/flags_from_pdf.py."""
-import base64, json, os, struct, subprocess, sys, tarfile, tempfile, zlib
+import atexit, base64, json, os, shutil, struct, subprocess, sys, tarfile, tempfile, zlib
 
 OUT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 work = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, work, ignore_errors=True)   # the npm downloads (~80 MB)
 
 
 def npm_pack(pkg):

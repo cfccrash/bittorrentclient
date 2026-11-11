@@ -372,6 +372,33 @@ def main():
         assert ok and dt >= 3.0, "download limit not enforced (%.1fs)" % dt
         print("download limit 512 KiB/s: 2.1 MB took %.1fs: OK" % dt)
 
+        # ---- the speed shown is bytes per REAL second, even when the 1-second tick runs late (a busy client)
+        import torrent_core as TCR
+        real_sleep = TCR.asyncio.sleep
+        async def late_sleep(d, *a, **k):          # every 1 s tick wakes 0.5 s late
+            return await real_sleep(d + 0.5 if d == 1 else d, *a, **k)
+        sm, lm = Manager(0, dht=False), Manager(0, dht=False)
+        TCR.asyncio.sleep = late_sleep
+        try:
+            lm.set_limits(120, 0)                    # 2.1 MB takes ~17 s
+            ss, _ = sm.add(data, seed_dir)
+            assert wait(lambda: ss.state == "Seeding", 20)
+            ls, _ = lm.add(data, tempfile.mkdtemp(dir=tmp))
+            assert wait(lambda: ls.state in ("Downloading", "Seeding"), 20)
+            lm.add_peer(t.hex, "127.0.0.1", sm.port)
+            assert wait(lambda: ls.downloaded > 150_000, 20)
+            time.sleep(8)                            # let the smoothing settle (ticks 1.5 s apart)
+            t0, d0, shown = time.time(), ls.downloaded, []
+            for _ in range(16):
+                time.sleep(0.25); shown.append(ls.down_rate)
+            true = (ls.downloaded - d0) / (time.time() - t0)
+            avg = sum(shown) / len(shown)
+            assert abs(avg / true - 1) < 0.2, "shown %.0f B/s, really %.0f B/s" % (avg, true)
+        finally:
+            TCR.asyncio.sleep = real_sleep
+            sm.shutdown(); lm.shutdown()
+        print("download speed shown = real bytes per second, also with late ticks (%.0f vs %.0f KiB/s): OK" % (avg / 1024, true / 1024))
+
         # ---- peer exchange: B only knows A, yet learns about the seeder S through ut_pex
         S, A, B = (Manager(0, dht=False, encryption="off") for _ in range(3))
         try:
@@ -869,6 +896,7 @@ m = Manager(0, dht=False)
 m.add(data, d)
 time.sleep(3)                                   # the "started" announces are now stuck too
 t0 = time.time(); m.shutdown(); print("shutdown %%.1f" %% (time.time() - t0), flush=True)
+import shutil; shutil.rmtree(d, ignore_errors=True)
 """ % os.path.dirname(os.path.abspath(__file__))
         t0 = time.time()
         out = _sp.run([sys.executable, "-c", quit_script], capture_output=True, text=True, timeout=90)
