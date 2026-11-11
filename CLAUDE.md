@@ -59,6 +59,8 @@ Current version is in `version.py`; release notes are the sections at the bottom
   mpv MBTN/WHEEL keybinds are added there (Windows: Tk bindings on panel.video).
 - CI job `linux` (archlinux container): tests under xvfb-run, `tools/linux_screens.py` screenshots (artifact), PyInstaller
   build -> BitTorrentClient-linux-x86_64-<ver>.tar.gz + PKGBUILD (from packaging/linux/PKGBUILD.in) on the release.
+  It also runs makepkg (as user `builder`, the tarball beside the PKGBUILD so nothing is downloaded), installs the
+  .pkg.tar.zst with pacman -U, starts /usr/bin/bittorrentclient, removes it, and uploads it (versioned + fixed name).
   No WSL on the dev PC: check Linux through that job's screenshots.
 
 ## Things learned the hard way (Windows behaviour I could not test from Linux)

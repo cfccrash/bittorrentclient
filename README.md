@@ -41,18 +41,22 @@ there; details under "Releases (for the maintainer)" in the 1.9.21 notes.
 
 ## Install it on Arch Linux
 
-Every release also has a prebuilt Linux program and a ready `PKGBUILD` on the
-[releases page](https://github.com/cfccrash/bittorrentclient-releases/releases). To install it as a package:
+Every release has a ready-made Arch package on the
+[releases page](https://github.com/cfccrash/bittorrentclient-releases/releases). Download it and install it with pacman
+(nothing to build):
 
 ```bash
-mkdir bittorrentclient && cd bittorrentclient
-curl -LO https://github.com/cfccrash/bittorrentclient-releases/releases/latest/download/PKGBUILD
-makepkg -si
+curl -LO https://github.com/cfccrash/bittorrentclient-releases/releases/latest/download/bittorrentclient-bin-x86_64.pkg.tar.zst
+sudo pacman -U bittorrentclient-bin-x86_64.pkg.tar.zst
 ```
 
 That installs it in `/opt/bittorrentclient` with a menu entry, the icon and the `bittorrentclient` command, and pulls in
-`mpv` (for the built-in player) and `xdg-utils`. Updating later: run the same three lines again (or use an AUR helper if
-the package is published there). Optional: `libnotify` for desktop notifications.
+`mpv` (for the built-in player) and `xdg-utils`. Updating later: run the same two lines again. **Uninstall:**
+`sudo pacman -R bittorrentclient-bin`. Optional: `libnotify` for desktop notifications.
+
+Prefer to build it yourself? The release's `PKGBUILD` does the same: install `base-devel` first
+(`sudo pacman -S --needed base-devel`), then, as your normal user (makepkg refuses to run as root or with sudo), run
+`makepkg -si` in a folder holding the `PKGBUILD`.
 
 What is different on Linux:
 - The window uses your desktop's own title bar (the Aurora title bar, Windows Snap and the see-through option windows are
@@ -490,6 +494,9 @@ downloaded yet waits for it instead of failing.
 - Player keys work again: in the Player tab they now act whenever that tab is showing (not only when the keyboard happened to be inside it), and not while you type in a text box or in another window's dialog.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
+
+### 1.9.52 - Arch Linux: a ready-made package
+- Every release now has a finished Arch package (`bittorrentclient-bin-x86_64.pkg.tar.zst`): download it and install it with `sudo pacman -U`, which also installs mpv and the other things it needs. No more building with makepkg (which needs `base-devel` and refuses to run as root, so it was easy to get stuck). The release build makes the package, installs it, checks the menu entry and icon, starts the program and uninstalls it again before publishing anything.
 
 ### 1.9.51 - Remove several torrents at once; one port for everything
 - **Fixed:** when another program held the UDP side of the listening port, uTP and the DHT quietly moved to a different port than the one peers were told, so uTP peers could not connect to you. The app now picks a port that is free for TCP and UDP, over IPv4 and IPv6, together. (1.9.50 was never published: its build caught this.)

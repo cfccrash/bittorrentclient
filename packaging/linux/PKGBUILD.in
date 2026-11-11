@@ -1,6 +1,7 @@
 # Maintainer: Bit Torrent Client
 # Arch Linux package of the prebuilt program (made by the release workflow, .github/workflows/build.yml).
-# @VERSION@ and @SHA256@ are filled in when a release is built; the finished PKGBUILD is attached to every release.
+# The version and checksum are filled in when a release is built; the finished PKGBUILD and the built package
+# (bittorrentclient-bin-<version>-1-x86_64.pkg.tar.zst, install with `sudo pacman -U`) are attached to every release.
 pkgname=bittorrentclient-bin
 pkgver=@VERSION@
 pkgrel=1

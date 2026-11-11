@@ -79,7 +79,7 @@ jobs:
       - name: Install Python, Tk, mpv and the tools
         run: |
           pacman -Syu --noconfirm --needed python tk mpv xorg-server-xvfb xorg-xauth imagemagick ttf-dejavu \
-            git github-cli binutils xdg-utils
+            git github-cli binutils xdg-utils base-devel
       - uses: actions/checkout@v7
       - name: Tests (virtual display)
         run: xvfb-run -a -s "-screen 0 1920x1080x24" python run_tests.py
@@ -106,12 +106,33 @@ jobs:
       - name: The built program starts (virtual display)
         run: |
           xvfb-run -a -s "-screen 0 1920x1080x24" sh -c 'APPDATA=$(mktemp -d) timeout 20 dist/BitTorrentClient/BitTorrentClient & sleep 12; pgrep -f dist/BitTorrentClient/BitTorrentClient'
+      # A ready-made Arch package, so nobody has to run makepkg: `sudo pacman -U` installs it (and pulls in mpv etc.).
+      # makepkg refuses to run as root, hence the build user; the tarball sits next to the PKGBUILD, so makepkg uses it
+      # instead of downloading it. Then it is installed and started exactly the way the download page says.
+      - name: Make the Arch package, install it and start it
+        run: |
+          ver=$(python -c "from version import VERSION; print(VERSION)")
+          useradd -m builder
+          mkdir -p /tmp/pkg
+          cp PKGBUILD BitTorrentClient-linux-x86_64-$ver.tar.gz /tmp/pkg/
+          chown -R builder /tmp/pkg
+          su builder -c "cd /tmp/pkg && makepkg -f --nodeps --noconfirm"
+          cp /tmp/pkg/bittorrentclient-bin-$ver-1-x86_64.pkg.tar.zst .
+          cp bittorrentclient-bin-$ver-1-x86_64.pkg.tar.zst bittorrentclient-bin-x86_64.pkg.tar.zst
+          pacman -U --noconfirm ./bittorrentclient-bin-x86_64.pkg.tar.zst
+          test -x /usr/bin/bittorrentclient
+          test -f /usr/share/applications/bittorrentclient.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/bittorrentclient.png
+          xvfb-run -a -s "-screen 0 1920x1080x24" sh -c 'timeout 20 bittorrentclient & sleep 12; pgrep -f /opt/bittorrentclient/BitTorrentClient'
+          pacman -R --noconfirm bittorrentclient-bin
+          test ! -e /opt/bittorrentclient/BitTorrentClient
       - uses: actions/upload-artifact@v7
         with:
           name: BitTorrentClient-linux
           path: |
             BitTorrentClient-linux-x86_64-*.tar.gz
             PKGBUILD
+            bittorrentclient-bin-*.pkg.tar.zst
       - name: Add the Linux files to the release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -120,5 +141,6 @@ jobs:
           repo=$(python -c "import updater; print(updater.RELEASES_REPO)")
           # also under a fixed name, so .../releases/latest/download/BitTorrentClient-linux-x86_64.tar.gz never changes
           cp BitTorrentClient-linux-x86_64-*.tar.gz BitTorrentClient-linux-x86_64.tar.gz
+          # the Arch package, versioned and under a fixed name (.../latest/download/bittorrentclient-bin-x86_64.pkg.tar.zst)
           gh release upload "${{ github.ref_name }}" BitTorrentClient-linux-x86_64-*.tar.gz BitTorrentClient-linux-x86_64.tar.gz \
-            PKGBUILD --repo "$repo" --clobber
+            PKGBUILD bittorrentclient-bin-*-x86_64.pkg.tar.zst bittorrentclient-bin-x86_64.pkg.tar.zst --repo "$repo" --clobber
