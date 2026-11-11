@@ -847,6 +847,92 @@ def main():
         assert dm.backend is None and any("re-scan" in l for l in dm.log)
         print("router discovery hardening (tolerant XML, gateway guess, diagnostics, rescan): OK")
 
+        # =================== IPv6 ===================
+        import torrent_core as TC
+        a6 = ("2001:db8::5", 51413)
+        assert TC._compact6(TC._pack_peer(a6)) == [a6] and len(TC._pack_peer(a6)) == 18
+        assert TC._compact(TC._pack_peer(("1.2.3.4", 80))) == [("1.2.3.4", 80)]
+        nid = bytes(range(20))
+        assert TC._parse_nodes6(nid + TC._pack_peer(a6)) == [(nid, a6)]
+        assert TC._good_peer_ip("::1") and TC._good_peer_ip("2a00:1450::1") and TC._good_peer_ip("8.8.8.8")
+        assert not any(TC._good_peer_ip(x) for x in ("fe80::1", "::", "ff02::1", "::ffff:1.2.3.4", "0.0.0.0", "nonsense"))
+        off = Manager(0, dht=False, ipv6=False)
+        assert not off.ipv6 and not off.family_ok("::1") and off.family_ok("127.0.0.1") and off.ipv6_status() == "off"
+        off.shutdown()
+        print("IPv6 compact peers / nodes6 / address filter / setting off: OK")
+
+        probe = _socket.socket(_socket.AF_INET6, _socket.SOCK_STREAM)
+        try:
+            probe.bind(("::1", 0)); have_v6 = True
+        except OSError:
+            have_v6 = False
+        probe.close()
+        if not have_v6:
+            print("IPv6 loopback not available here: IPv6 transfer tests skipped")
+        else:
+            ok, dt, ls = run_pair({}, {}, peer_ip="::1")
+            assert ok and ls.stats["tcp"] > 0, ls.stats
+            print("IPv6 TCP transfer over ::1: OK (%.1fs)" % dt, ls.stats)
+            ok, dt, ls = run_pair(dict(utp="prefer", encryption="off"), dict(utp="prefer", encryption="off"), peer_ip="::1")
+            assert ok and ls.stats["utp"] > 0, ls.stats
+            print("IPv6 uTP transfer over ::1: OK (%.1fs)" % dt, ls.stats)
+
+            # peer exchange carries IPv6 peers in added6
+            S, A, B = Manager(0, dht=False), Manager(0, dht=False), Manager(0, dht=False)
+            try:
+                S.set_limits(0, 600)
+                ss, _ = S.add(data, seed_dir)
+                assert wait(lambda: ss.state == "Seeding", 20)
+                asess, _ = A.add(data, tempfile.mkdtemp(dir=tmp))
+                bsess, _ = B.add(data, tempfile.mkdtemp(dir=tmp))
+                assert wait(lambda: asess.state == "Downloading" and bsess.state == "Downloading", 20)
+                A.add_peer(t.hex, "::1", S.port)
+                B.add_peer(t.hex, "::1", A.port)
+                assert wait(lambda: bsess.complete and asess.complete, 60), "IPv6 PEX swarm stalled"
+                assert bsess.stats["pex"] > 0, "B never learned an IPv6 peer through PEX"
+                print("peer exchange with IPv6 peers (added6): OK")
+            finally:
+                for m in (S, A, B):
+                    m.shutdown()
+
+            # DHT over IPv6 (BEP 32): nodes6 routing, announce + lookup
+            first = Manager(0, dht_bootstrap=[])
+            d6 = lambda m: m.dht_for("::1")
+            assert d6(first) is not None and d6(first) is not first.dht, "no IPv6 DHT"
+            boot6 = [("::1", d6(first).port)]
+            ms = [first] + [Manager(0, dht_bootstrap=boot6) for _ in range(4)]
+            try:
+                assert wait(lambda: all(len(d6(m).nodes) >= 2 for m in ms), 30), [len(d6(m).nodes) for m in ms]
+                assert all(":" in a[0] for m in ms for a in d6(m).nodes)
+                ms[1]._run(d6(ms[1]).get_peers(ih, announce_port=23456))
+                found = ms[3]._run(d6(ms[3]).get_peers(ih))
+                assert ("::1", 23456) in found, found
+                print("DHT over IPv6 (nodes6): tables", [len(d6(m).nodes) for m in ms], "announce + lookup: OK")
+            finally:
+                for m in ms:
+                    m.shutdown()
+
+            # UDP tracker over IPv6: 18-byte peer entries
+            trk6 = _socket.socket(_socket.AF_INET6, _socket.SOCK_DGRAM); trk6.bind(("::1", 0))
+            def trk6_loop():
+                while True:
+                    try:
+                        d, addr = trk6.recvfrom(2048)
+                    except OSError:
+                        return
+                    if len(d) == 16:
+                        trk6.sendto(struct.pack(">IIQ", 0, struct.unpack(">I", d[12:16])[0], 777), addr)
+                    elif len(d) >= 98:
+                        trk6.sendto(struct.pack(">IIIII", 1, struct.unpack(">I", d[12:16])[0], 1800, 0, 1)
+                                    + TC._pack_peer(("::1", seeder.port)), addr)
+            _th.Thread(target=trk6_loop, daemon=True).start()
+            u6data = make_torrent(content, 32768, announce="udp://[::1]:%d/announce" % trk6.getsockname()[1])
+            ul6 = Manager(0, dht=False)
+            us6, _ = ul6.add(u6data, tempfile.mkdtemp(dir=tmp))
+            assert wait(lambda: us6.complete, 60), "download via IPv6 UDP-tracker peer list stalled"
+            ul6.shutdown(); trk6.close()
+            print("UDP tracker over IPv6 (18-byte peers): download verified: OK")
+
         seeder.shutdown()
         print("ALL TESTS PASSED")
     finally:

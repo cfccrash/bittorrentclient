@@ -190,7 +190,7 @@ Peer handling is also smarter: while downloading, the peers that send you the mo
 
 ## Peer locations
 The **Peers** tab shows a national flag and country name for every peer, looked up offline from a bundled IPv4 database
-(no network requests, nothing about your peers leaves your PC). Private / LAN addresses show "Local / unknown". The country is
+(no network requests, nothing about your peers leaves your PC). Private / LAN addresses show "Local / unknown", IPv6 peers show "IPv6". The country is
 where the address block is registered, so VPN, proxy and CDN peers can appear in another country. IP data: DB-IP Lite country
 database by [DB-IP.com](https://db-ip.com) (CC BY 4.0); flags from [flag-icons](https://github.com/lipis/flag-icons) (MIT).
 Refresh the data with `python3 tools/build_geo.py` (needs npm and rsvg-convert).
@@ -226,7 +226,7 @@ build environment; the formats follow the BEP / MSE specifications. If a particu
 try Settings -> Encryption "Prefer" and Transport "TCP first".
 
 Not supported: BEP 42 DHT node-id hardening, per-torrent speed limits, scheduling.
-Notes: IPv6 is deliberately not supported (it was removed in 1.1.4); the client is IPv4 only. IPv6 peers from trackers, PEX and the DHT are ignored.
+IPv6: when your computer has it, the client also listens and connects over IPv6 (TCP and uTP on the same port number), takes IPv6 peers from trackers (`peers6`, UDP trackers over IPv6), peer exchange (`added6`) and a second DHT over IPv6 (BEP 32). Turn it off in Settings -> Connection -> Router ("Use IPv6 when available"); Diagnostics shows the IPv6 state.
 
 Only download content you have the right to share.
 
@@ -490,6 +490,10 @@ downloaded yet waits for it instead of failing.
 - Player keys work again: in the Player tab they now act whenever that tab is showing (not only when the keyboard happened to be inside it), and not while you type in a text box or in another window's dialog.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
+
+### 1.9.44 - IPv6
+- **IPv6 connections:** when your Internet connection has IPv6, the client now also listens and connects over it (TCP and uTP), and finds IPv6 peers through trackers, peer exchange and an IPv6 DHT. Many home connections reach IPv6 peers directly, without the router's port forwarding, so you meet more peers and more of them can connect to you. On a real swarm about half the peers and the data came over IPv6.
+- *Settings -> Connection -> Router* has a "Use IPv6 when available" switch (on by default; takes effect after a restart) and shows whether IPv6 is working. *Diagnostics* includes it too, and IPv6 peers show "IPv6" in the Peers tab.
 
 ### 1.9.43 - Linux
 - **Runs on Arch Linux (and other Linux desktops):** every release now also has a prebuilt Linux program and a `PKGBUILD` (see *Install it on Arch Linux*). Folders open in your file manager, finished downloads raise a desktop notification, "Start when I sign in" and the magnet-link handler use the freedesktop standards, settings live in `~/.local/share`, and the player draws its own icons where the Windows icon font is missing.

@@ -17,6 +17,7 @@ import base64
 import bisect
 import collections
 import hashlib
+import ipaddress
 import os
 import random
 import re
@@ -447,10 +448,12 @@ class Peer:
             return
         msg = {}
         for key, items in (("added", added), ("dropped", dropped)):
-            v4 = [a for a in items if ":" not in a[0]]
-            msg[key] = b"".join(_pack_peer(a) for a in v4)
-            if key == "added":
-                msg["added.f"] = bytes(len(v4))
+            for k, fam in ((key, False), (key + "6", True)):          # IPv4 in added/dropped, IPv6 in added6/dropped6
+                part = [a for a in items if _is_v6(a[0]) == fam]
+                if part or not fam:
+                    msg[k] = b"".join(_pack_peer(a) for a in part)
+                    if key == "added":
+                        msg[k + ".f"] = bytes(len(part))
         self.pex_sent = (self.pex_sent | set(added)) - set(dropped)
         self.send(20, bytes([self.ut_pex]) + bencode(msg))
 
@@ -1396,7 +1399,7 @@ class Session:
             self.announce_now.clear()
 
     def _usable(self, a):
-        return bool(a[1]) and ":" not in a[0]   # IPv4 only
+        return bool(a[1]) and self.mgr.family_ok(a[0])
 
     def on_pex(self, d):
         """Peers learned through ut_pex (BEP 11)."""
@@ -1404,6 +1407,9 @@ class Session:
         added = d.get(b"added", b"")
         if isinstance(added, bytes):
             found += _compact(added)
+        added6 = d.get(b"added6", b"")                     # IPv6 peers (BEP 11)
+        if isinstance(added6, bytes):
+            found += _compact6(added6)
         for a in found[:100]:
             if a not in self.addrs and a not in self.candidates and len(self.candidates) < 500 \
                     and self._usable(a):
@@ -1415,7 +1421,8 @@ class Session:
         delay = 5
         while True:
             results = await asyncio.gather(
-                *(d.get_peers(self.t.info_hash, self.mgr.public_port if self.dht_announce else 0)
+                *(d.get_peers(self.t.info_hash, (self.mgr.port if d.family == socket.AF_INET6 else self.mgr.public_port)
+                              if self.dht_announce else 0)                   # (no NAT on IPv6: our own port)
                   for d in self.mgr.dhts), return_exceptions=True)
             peers = set()
             for res in results:
@@ -1455,6 +1462,9 @@ class Session:
         out = []
         if isinstance(peers, bytes):
             out += _compact(peers)
+        peers6 = d.get(b"peers6", b"")                      # BEP 7: compact IPv6 peers
+        if isinstance(peers6, bytes):
+            out += _compact6(peers6)
         else:
             for p in peers:
                 try:
@@ -1464,12 +1474,28 @@ class Session:
         return int(d.get(b"interval", 1800)), out
 
     def _udp_announce(self, url, event):
+        """Announce over IPv4 and, if we have it and the tracker does, over IPv6 too (each family's tracker answer
+        lists that family's peers)."""
         u = urllib.parse.urlparse(url)
-        infos = [i for i in socket.getaddrinfo(u.hostname, u.port or 80, type=socket.SOCK_DGRAM)
-                 if i[0] == socket.AF_INET]
-        if not infos:
+        infos = socket.getaddrinfo(u.hostname, u.port or 80, type=socket.SOCK_DGRAM)
+        fams = [socket.AF_INET] + ([socket.AF_INET6] if self.mgr.ipv6 else [])
+        picks = [next((i for i in infos if i[0] == f), None) for f in fams]
+        picks = [p for p in picks if p]
+        if not picks:
             raise RuntimeError("tracker has no usable address")
-        family, _, _, _, addr = infos[0]
+        interval, peers, errors = None, [], []
+        for family, _, _, _, addr in picks:
+            try:
+                iv, got = self._udp_announce_to(family, addr[:2], event)
+                interval = iv if interval is None else min(interval, iv)
+                peers += got
+            except (OSError, RuntimeError, struct.error) as e:
+                errors.append(e)
+        if interval is None:
+            raise errors[0]
+        return interval, peers
+
+    def _udp_announce_to(self, family, addr, event):
         sock = socket.socket(family, socket.SOCK_DGRAM)
         sock.settimeout(8)
         try:
@@ -1489,7 +1515,8 @@ class Session:
             act, rtid, interval = struct.unpack(">III", data[:12])
             if act != 1 or rtid != tid:
                 raise RuntimeError("bad announce response")
-            return interval, _compact(data[20:])   # 6-byte IPv4 peer entries
+            # BEP 15: 6-byte peer entries over IPv4, 18-byte ones over IPv6
+            return interval, (_compact6 if family == socket.AF_INET6 else _compact)(data[20:])
         finally:
             sock.close()
 
@@ -1692,6 +1719,42 @@ def _compact(b):
             for i in range(0, len(b) - 5, 6)]
 
 
+def _compact6(b):
+    """BEP 7 compact IPv6 peers: 16-byte address + 2-byte port."""
+    return [(socket.inet_ntop(socket.AF_INET6, b[i:i + 16]), struct.unpack(">H", b[i + 16:i + 18])[0])
+            for i in range(0, len(b) - 17, 18)]
+
+
+def ipv6_address():
+    """This computer's global IPv6 address as the system would use it to reach the Internet, or None. Connecting a
+    UDP socket sends nothing; it only asks the system to pick a route and source address."""
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.connect(("2001:4860:4860::8888", 53))
+            a = s.getsockname()[0].split("%")[0]
+        return a if ipaddress.IPv6Address(a).is_global else None
+    except (OSError, ValueError):
+        return None
+
+
+def _is_v6(ip):
+    return ":" in ip
+
+
+def _good_peer_ip(ip):
+    """An address worth connecting to: not unspecified, multicast or (scope-less) IPv6 link-local. IPv4-mapped IPv6
+    addresses are not used as such (the IPv4 form is)."""
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if a.is_unspecified or a.is_multicast:
+        return False
+    if a.version == 6 and (a.is_link_local or a.ipv4_mapped is not None):
+        return False
+    return True
+
+
 # --------------------------------------------------------------------------
 # DHT (BEP 5) - Kademlia over UDP
 # --------------------------------------------------------------------------
@@ -1706,12 +1769,21 @@ def _dist(a, b):
 
 
 def _pack_peer(addr):
+    """Compact peer: 6 bytes for IPv4, 18 for IPv6."""
+    if _is_v6(addr[0]):
+        return socket.inet_pton(socket.AF_INET6, addr[0]) + struct.pack(">H", addr[1])
     return socket.inet_aton(addr[0]) + struct.pack(">H", addr[1])
 
 
 def _parse_nodes(b):
     return [(b[i:i + 20], (socket.inet_ntoa(b[i + 20:i + 24]), struct.unpack(">H", b[i + 24:i + 26])[0]))
             for i in range(0, len(b) - 25, 26)]
+
+
+def _parse_nodes6(b):
+    """BEP 32 "nodes6": 20-byte id + 16-byte address + 2-byte port."""
+    return [(b[i:i + 20], (socket.inet_ntop(socket.AF_INET6, b[i + 20:i + 36]), struct.unpack(">H", b[i + 36:i + 38])[0]))
+            for i in range(0, len(b) - 37, 38)]
 
 
 class DHT:
@@ -1769,7 +1841,7 @@ class DHT:
     def add_node(self, nid, addr):
         if not isinstance(nid, bytes) or len(nid) != 20 or nid == self.id or not addr[1]:
             return
-        if ":" in addr[0]:
+        if _is_v6(addr[0]) != (self.family == socket.AF_INET6):     # this table is for one address family only
             return
         self.nodes[addr] = [nid, time.time(), 0]
         if len(self.nodes) > 1500:
@@ -1832,7 +1904,7 @@ class DHT:
 
         def nodes_for(target):
             blob = b"".join(nid + _pack_peer(ad) for ad, nid in self.closest(target, K))
-            return {"nodes": blob}
+            return {"nodes6" if self.family == socket.AF_INET6 else "nodes": blob}
 
         if q == b"ping":
             reply({})
@@ -1868,6 +1940,8 @@ class DHT:
             error(204, "method unknown")
 
     async def query(self, addr, q, args, timeout=3.0):
+        if self.family == socket.AF_INET6 and q in ("find_node", "get_peers"):
+            args = dict(args, want=[b"n6"])                          # BEP 32: IPv6 nodes, please
         loop = asyncio.get_running_loop()
         tid = os.urandom(2)
         while tid in self.pending:
@@ -1929,9 +2003,12 @@ class DHT:
                 for v in values if isinstance(values, list) else []:
                     if isinstance(v, bytes) and len(v) == 6:
                         peers.add((socket.inet_ntoa(v[:4]), struct.unpack(">H", v[4:])[0]))
-                blob = r.get(b"nodes")
+                    elif isinstance(v, bytes) and len(v) == 18:
+                        peers.update(_compact6(v))
+                v6 = self.family == socket.AF_INET6
+                blob = r.get(b"nodes6" if v6 else b"nodes")
                 if isinstance(blob, bytes):
-                    for n_id, n_addr in _parse_nodes(blob):
+                    for n_id, n_addr in (_parse_nodes6 if v6 else _parse_nodes)(blob):
                         if n_id != self.id and n_addr[1] and n_addr not in shortlist:
                             shortlist[n_addr] = n_id
         return peers, tokens, responded
@@ -1956,6 +2033,22 @@ class DHT:
 # --------------------------------------------------------------------------
 # Manager (thread-safe facade used by the GUI)
 # --------------------------------------------------------------------------
+class _V6Sender:
+    """An IPv6 datagram transport that takes (ip, port) addresses: Windows' proactor event loop rejects the 2-tuple
+    form with WSAEINVAL (reported only through error_received, so the packet just vanishes)."""
+
+    def __init__(self, transport):
+        self._t = transport
+
+    def sendto(self, data, addr=None):
+        if addr is not None and len(addr) == 2:
+            addr = (addr[0], addr[1], 0, 0)
+        self._t.sendto(data, addr)
+
+    def __getattr__(self, name):
+        return getattr(self._t, name)
+
+
 class UDPMux(asyncio.DatagramProtocol):
     """One UDP socket shared by the DHT (bencoded: starts with 'd') and uTP."""
 
@@ -1965,7 +2058,8 @@ class UDPMux(asyncio.DatagramProtocol):
         self.utp = None
 
     def connection_made(self, transport):
-        self.transport = transport
+        sock = transport.get_extra_info("socket")
+        self.transport = _V6Sender(transport) if sock is not None and sock.family == socket.AF_INET6 else transport
 
     def datagram_received(self, data, addr):
         if not data:
@@ -1990,7 +2084,11 @@ def _bind(family, kind, port):
         s.setblocking(False)
         if kind == socket.SOCK_STREAM and os.name != "nt":
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("0.0.0.0", port))
+        if family == socket.AF_INET6:          # IPv6 only: IPv4 has its own socket on the same port
+            s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            s.bind(("::", port))
+        else:
+            s.bind(("0.0.0.0", port))
     except OSError:
         s.close()
         raise
@@ -2033,8 +2131,10 @@ class Manager:
     """
 
     def __init__(self, port=6881, dht=True, dht_bootstrap=None, encryption="prefer",
-                 utp="fallback", down_limit=0, up_limit=0, portmap=False):
+                 utp="fallback", down_limit=0, up_limit=0, portmap=False, ipv6=True):
         self.dht = None
+        self.ipv6_wanted = ipv6  # also listen / connect over IPv6 when the system has it
+        self.ipv6 = False        # ... and it does: an IPv6 listener is up
         self.portmap = None
         self.portmap_opts = {}  # PortMapper overrides (tests)
         self.udp_port = 0
@@ -2373,11 +2473,20 @@ class Manager:
             except OSError:
                 pass
         fams = [socket.AF_INET]
+        # IPv6: a second listener on the same port number (IPv6-only sockets, so both families can use it)
+        if self.ipv6_wanted and socket.has_ipv6 and self.port:
+            try:
+                s6 = _bind(socket.AF_INET6, socket.SOCK_STREAM, self.port)
+                self.servers.append(await asyncio.start_server(self._incoming, sock=s6))
+                self.ipv6 = True
+                fams.append(socket.AF_INET6)
+            except OSError:
+                self.ipv6 = False
         # UDP: the DHT and uTP share one socket
         node_id = os.urandom(20)
         for fam in fams:
             sock = None
-            for udp_port in (self.port, 0):
+            for udp_port in ((self.udp_port or self.port, 0) if fam == socket.AF_INET6 else (self.port, 0)):
                 try:
                     sock = _bind(fam, socket.SOCK_DGRAM, udp_port)
                     break
@@ -2432,14 +2541,28 @@ class Manager:
         return (pm.ext.get(("UDP", local)) if pm else None) or local
 
     def dht_for(self, ip):
-        return self.dhts[0] if self.dhts and ":" not in ip else None
+        fam = socket.AF_INET6 if _is_v6(ip) else socket.AF_INET
+        return next((d for d in self.dhts if d.family == fam), None)
+
+    def ipv6_status(self):
+        """Short text for Settings / Diagnostics."""
+        if not self.ipv6_wanted:
+            return "off"
+        if not self.ipv6:
+            return "not available on this computer"
+        a = ipv6_address()
+        return ("on (%s)" % a) if a else "on, but this network has no IPv6 Internet"
+
+    def family_ok(self, ip):
+        """Can we reach this address (IPv6 needs our IPv6 listener / sockets)?"""
+        return _good_peer_ip(ip) and (not _is_v6(ip) or self.ipv6)
 
     def _utp_accept(self, r, w):
         asyncio.get_running_loop().create_task(self._incoming(r, w))
 
     # -- connections --------------------------------------------------------
     def _transports(self, addr):
-        can_utp = self.utp_mode != "off" and socket.AF_INET in self.udp
+        can_utp = self.utp_mode != "off" and (socket.AF_INET6 if _is_v6(addr[0]) else socket.AF_INET) in self.udp
         if not can_utp:
             return ["tcp"]
         return ["utp", "tcp"] if self.utp_mode == "prefer" else ["tcp", "utp"]
@@ -2447,13 +2570,13 @@ class Manager:
     async def _open(self, kind, addr):
         if kind == "tcp":
             return await asyncio.wait_for(asyncio.open_connection(addr[0], addr[1]), 8)
-        return await self.udp[socket.AF_INET].utp.connect(addr, timeout=6)
+        return await self.udp[socket.AF_INET6 if _is_v6(addr[0]) else socket.AF_INET].utp.connect(addr, timeout=6)
 
     async def dial(self, addr, info_hash):
         """Open an outgoing peer connection (TCP/uTP, optionally encrypted); returns (reader, writer)
         ready for the BitTorrent handshake."""
-        if ":" in addr[0]:
-            raise OSError("IPv6 is not supported")
+        if _is_v6(addr[0]) and not self.ipv6:
+            raise OSError("IPv6 is not available here")
         # light: encrypted handshake with plain data first, then full RC4 if the peer insists, then fully plain
         modes = {"off": ["plain"], "prefer": ["rc4", "plain"], "light": ["light", "rc4", "plain"],
                  "require": ["rc4"]}.get(self.encryption, ["plain"])

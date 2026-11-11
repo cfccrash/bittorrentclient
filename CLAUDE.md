@@ -78,6 +78,10 @@ Current version is in `version.py`; release notes are the sections at the bottom
   cancels only those - `after info` lists the whole app's timers).
 - Frameless windows (`overrideredirect`) are not stacked by Windows like owned dialogs: modal dialogs must stay `-topmost`, and must never `wait_visibility()`;
   otherwise a dialog can hide behind another window while holding the grab = "app froze". See `_Dialog.show`.
+- IPv6 (`Manager(ipv6=True)`, cfg "ipv6"): separate IPV6_V6ONLY sockets on the same port as IPv4 (TCP listener,
+  UDP mux with its own uTP + DHT, `dht_for(ip)` picks the family). On Windows the proactor's UDP `sendto` rejects
+  (ip, port) for IPv6 - only (ip, port, 0, 0) works, and the error goes to error_received silently: `_V6Sender` pads it.
+  `_good_peer_ip` drops link-local / mapped / multicast. `ipv6_status()` feeds Settings and Diagnostics.
 - Tk `Canvas.lift/tkraise` raise canvas *items*; use `tk.Misc.tkraise(widget)`.
 - ctypes: declare `restype` for every Win32 call returning a handle/pointer (default is 32-bit int: a 64-bit HMODULE
   gets truncated). faulthandler logs even faults Windows handles, so "access violation" in error.log can mean this.

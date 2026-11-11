@@ -284,7 +284,7 @@ class App:
         self._media_cache, self._offered_lib = (0, {}), False
         self.cfg = {"download_dir": os.path.join(os.path.expanduser("~"), "Downloads"), "torrents": [],
                     "down_limit": 0, "up_limit": 0, "encryption": "light", "utp": "fallback",
-                    "portmap": True, "theme": "dark", "port": 0, "tray": True, "notify": True, "max_active": 0,
+                    "portmap": True, "ipv6": True, "theme": "dark", "port": 0, "tray": True, "notify": True, "max_active": 0,
                     "seed_ratio": 0, "seed_minutes": 0, "seed_action": "pause", "done_dir": "", "categories": {},
                     "update_repo": "", "update_check": True, "update_last": 0, "search_source": "",
                     "alt_down": 0, "alt_up": 0, "alt_on": False, "sched_on": False, "sched_start": "08:00",
@@ -399,7 +399,8 @@ class App:
 
         self.mgr = Manager(self.cfg["port"], encryption=self.cfg["encryption"],
                            utp=self.cfg["utp"], down_limit=self.cfg["down_limit"],
-                           up_limit=self.cfg["up_limit"], portmap=self.cfg["portmap"])
+                           up_limit=self.cfg["up_limit"], portmap=self.cfg["portmap"],
+                           ipv6=bool(self.cfg.get("ipv6", True)))
         self.mgr.banned = {str(ip) for ip in self.cfg.get("banned", [])}
         self.mgr.on_metadata = self.on_metadata
         self.mgr.on_finished = lambda h, name: self.finished.put((h, name))   # network thread -> queue -> poll()
@@ -1245,7 +1246,7 @@ class App:
                 dt = max(now - t0, 0.5)
                 seen[k] = (p["rx"], p["tx"], now) if now - t0 >= 0.9 else prev.get(k, (p["rx"], p["tx"], now))
                 code = self._geo(p["addr"])
-                rows.append((str(k), (p["addr"], geo.name(code) if code else "Local / unknown", p["client"], p["flags"],
+                rows.append((str(k), (p["addr"], geo.name(code) if code else ("IPv6" if p["addr"].startswith("[") else "Local / unknown"), p["client"], p["flags"],
                                       "%d%%" % int(p["progress"] * 100),
                                       fmt_rate((p["rx"] - rx0) / dt), fmt_rate((p["tx"] - tx0) / dt)),
                              geo.flag_image(code, self.scale >= 1.5) if code else None))
@@ -1707,7 +1708,7 @@ class App:
     def _geo(self, addr):
         """Country code of a peer address 'ip:port' (cached)."""
         cache = self.__dict__.setdefault("_geo_cache", {})
-        ip = addr.rsplit(":", 1)[0]
+        ip = addr.rsplit(":", 1)[0].strip("[]")   # 'ip:port' or '[ipv6]:port'
         if ip not in cache:
             if len(cache) > 5000:
                 cache.clear()
@@ -2503,6 +2504,7 @@ class App:
         pm = self.mgr.portmap
         parts = ["Windows Firewall: %s" % (self.fw_state or "unknown"), netcheck.summary(self.net_state)]
         parts.append(pm.diagnostics() if pm else "Automatic port forwarding is turned off.")
+        parts.append("IPv6: %s" % self.mgr.ipv6_status())
         hints = self.hints()
         if hints:
             parts.insert(0, "What to try:\n" + "\n".join("  - " + h for h in hints) + "\n")
@@ -2525,7 +2527,7 @@ class App:
     def apply_settings(self, down_limit, up_limit, encryption, utp, portmap, theme, download_dir, port=None, tray=None, notify=None, notify_sound=None, native_frame=None,
                        max_active=None, autostart=None, seed_ratio=None, seed_minutes=None, seed_action=None,
                        done_dir=None, categories=None, update_repo=None, update_check=None, player=None, libmpv=None, player_exe=None, player_where=None, media=None,
-                       alt_down=None, alt_up=None, sched_on=None, sched_start=None, sched_end=None, sched_days=None):
+                       alt_down=None, alt_up=None, sched_on=None, sched_start=None, sched_end=None, sched_days=None, ipv6=None):
         self.cfg.update(down_limit=max(0, int(down_limit)), up_limit=max(0, int(up_limit)), encryption=encryption,
                         utp=utp, portmap=bool(portmap), theme=theme, download_dir=download_dir)
         if alt_down is not None:
@@ -2572,6 +2574,8 @@ class App:
         self.mgr.encryption = encryption
         self.mgr.utp_mode = utp
         self.mgr.set_portmap(bool(portmap))
+        if ipv6 is not None:
+            self.cfg["ipv6"] = bool(ipv6)   # used from the next start (the listeners are opened at start)
         self.P = ui.palette(theme)
         self.apply_theme()
         self.save()

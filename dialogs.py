@@ -907,18 +907,22 @@ class SettingsDialog(_Dialog):
         self.portmap = tk.BooleanVar(value=cfg["portmap"])
         ttk.Checkbutton(box, text="Automatic port forwarding (PCP / NAT-PMP / UPnP)",
                         variable=self.portmap).grid(row=0, column=0, sticky="w")
+        self.ipv6 = tk.BooleanVar(value=cfg.get("ipv6", True))
+        ttk.Checkbutton(box, text="Use IPv6 when available (takes effect after restart)",
+                        variable=self.ipv6).grid(row=1, column=0, sticky="w", pady=(6, 0))
         pf = ttk.Frame(box)
-        pf.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        pf.grid(row=2, column=0, sticky="w", pady=(8, 0))
         ttk.Label(pf, text="Listening port").pack(side="left")
         self.port = tk.StringVar(value=str(cfg.get("port") or mgr.port or ""))
         ttk.Entry(pf, textvariable=self.port, width=8).pack(side="left", padx=8)
         ttk.Button(pf, text="Random", command=lambda: self.port.set(str(random.randint(20000, 40000)))).pack(side="left")
         ttk.Label(pf, text="takes effect after restart", style="Muted.TLabel").pack(side="left", padx=8)
         status = mgr.portmap.status if mgr.portmap else "off"
-        ttk.Label(box, text="Listening on port %s.   Status: %s" % (mgr.port or "-", status), style="Muted.TLabel",
-                  wraplength=self.px(470), justify="left").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        v6 = mgr.ipv6_status() if hasattr(mgr, "ipv6_status") else "off"
+        ttk.Label(box, text="Listening on port %s.   Status: %s\nIPv6: %s" % (mgr.port or "-", status, v6),
+                  style="Muted.TLabel", wraplength=self.px(470), justify="left").grid(row=3, column=0, sticky="w", pady=(8, 0))
         bt = ttk.Frame(box)
-        bt.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        bt.grid(row=4, column=0, sticky="w", pady=(10, 0))
         ttk.Button(bt, text="Diagnostics\u2026", command=self._diagnostics).pack(side="left")
         ttk.Button(bt, text="Banned peers\u2026", command=self._banned).pack(side="left", padx=(8, 0))
         ttk.Label(c, text="Peer locations: IP geolocation by DB-IP.com (CC BY 4.0); flags from flag-icons (MIT). "
@@ -1307,7 +1311,7 @@ class SettingsDialog(_Dialog):
                            sched_days=[i for i, v in enumerate(self.sched_days) if v.get()], tray=bool(self.tray.get()), notify=bool(self.notify.get()), notify_sound=bool(self.notify_sound.get()), native_frame=bool(self.native_frame.get()), max_active=maxa,
                            autostart=bool(self.autostart.get()) if hasattr(self, "autostart") else None, down_limit=down, up_limit=up, encryption=ENC_CHOICES[self.enc.get()],
                            utp=UTP_CHOICES[self.utp.get()],
-                           portmap=bool(self.portmap.get()), theme=THEME_CHOICES[self.theme.get()],
+                           portmap=bool(self.portmap.get()), ipv6=bool(self.ipv6.get()), theme=THEME_CHOICES[self.theme.get()],
                            download_dir=self.folder.get().strip() or self.app.cfg["download_dir"],
                            seed_ratio=seed_ratio, seed_minutes=seed_minutes,
                            seed_action=SEED_ACTIONS[self.seed_action.get()], done_dir=self.done_dir.get().strip(),
