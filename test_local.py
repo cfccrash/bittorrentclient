@@ -364,6 +364,28 @@ def main():
         assert ok and ls.stats["utp"] > 0 and ls.stats["encrypted"] > 0, ls.stats
         print("encrypted uTP transfer: OK (%.1fs)" % dt, ls.stats)
 
+        # ---- one port number for TCP, UDP (uTP + DHT) and IPv6, even when another program holds the UDP side
+        import socket as _sk
+        blocker = _sk.socket(_sk.AF_INET, _sk.SOCK_DGRAM); blocker.bind(("0.0.0.0", 0))
+        busy = blocker.getsockname()[1]
+        try:
+            bm = Manager(busy, dht=False)
+            try:
+                assert bm.port != busy and bm.udp_port == bm.port, (busy, bm.port, bm.udp_port)
+                if bm.ipv6:
+                    assert bm.udp[_sk.AF_INET6].transport.get_extra_info("sockname")[1] == bm.port
+            finally:
+                bm.shutdown()
+        finally:
+            blocker.close()
+        for _ in range(5):        # port 0: the OS's pick, checked for UDP (and IPv6) too
+            bm = Manager(0, dht=False)
+            try:
+                assert bm.udp_port == bm.port, (bm.port, bm.udp_port)
+            finally:
+                bm.shutdown()
+        print("TCP, UDP and IPv6 share one port number (a port whose UDP side is taken is skipped): OK")
+
         # ---- speed limits (KiB/s): 2.1 MB at 512 KiB/s needs >= ~4 s
         ok, dt, _ = run_pair({}, {}, timeout=40, seed_limit=512)
         assert ok and dt >= 3.0, "upload limit not enforced (%.1fs)" % dt

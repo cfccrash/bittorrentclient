@@ -2494,45 +2494,64 @@ class Manager:
         self.down.rate = max(0, int(down_kib)) * 1024
         self.up.rate = max(0, int(up_kib)) * 1024
 
+    @staticmethod
+    def _bind_set(p, want6):
+        """TCP and UDP (and, with want6, both again over IPv6) all on port number `p` (0: one the OS picks), or None.
+        One number for everything: peers reach uTP and the DHT at the port they were told for TCP."""
+        socks = {}
+        try:
+            socks[(socket.AF_INET, socket.SOCK_STREAM)] = s4 = _bind(socket.AF_INET, socket.SOCK_STREAM, p)
+            p = s4.getsockname()[1]
+            socks[(socket.AF_INET, socket.SOCK_DGRAM)] = _bind(socket.AF_INET, socket.SOCK_DGRAM, p)
+            if want6:
+                socks[(socket.AF_INET6, socket.SOCK_STREAM)] = _bind(socket.AF_INET6, socket.SOCK_STREAM, p)
+                socks[(socket.AF_INET6, socket.SOCK_DGRAM)] = _bind(socket.AF_INET6, socket.SOCK_DGRAM, p)
+            return socks
+        except OSError:
+            for s in socks.values():
+                s.close()
+            return None
+
     async def _serve(self, port):
         loop = asyncio.get_running_loop()
-        for p in range(port, port + 20):
+        want6 = False
+        if self.ipv6_wanted and socket.has_ipv6:          # does this system do IPv6 at all?
             try:
-                s4 = _bind(socket.AF_INET, socket.SOCK_STREAM, p)
-            except OSError:
-                continue
-            self.servers.append(await asyncio.start_server(self._incoming, sock=s4))
-            self.port = s4.getsockname()[1]
-            break
-        else:   # all 20 taken or reserved (Windows excludes whole blocks): let the OS pick, never run without a listener
-            try:
-                s4 = _bind(socket.AF_INET, socket.SOCK_STREAM, 0)
-                self.servers.append(await asyncio.start_server(self._incoming, sock=s4))
-                self.port = s4.getsockname()[1]
+                _bind(socket.AF_INET6, socket.SOCK_STREAM, 0).close()
+                want6 = True
             except OSError:
                 pass
-        fams = [socket.AF_INET]
-        # IPv6: a second listener on the same port number (IPv6-only sockets, so both families can use it)
-        if self.ipv6_wanted and socket.has_ipv6 and self.port:
-            try:
-                s6 = _bind(socket.AF_INET6, socket.SOCK_STREAM, self.port)
-                self.servers.append(await asyncio.start_server(self._incoming, sock=s6))
-                self.ipv6 = True
-                fams.append(socket.AF_INET6)
-            except OSError:
-                self.ipv6 = False
+        # a port free for everything: the asked-for one or the next 19 (Windows reserves whole blocks), or for
+        # port 0 a few the OS picks (its TCP pick can be taken for UDP by another program)
+        tries = list(range(port, port + 20)) if port else [0] * 30
+        socks = None
+        for v6 in ((True, False) if want6 else (False,)):
+            socks = next((s for s in (self._bind_set(p, v6) for p in tries) if s), None) or self._bind_set(0, v6)
+            if socks:
+                break
+        if socks is None:     # never run without a listener: TCP and UDP wherever they fit
+            socks = {}
+            for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
+                for p in (port, 0):
+                    try:
+                        socks[(socket.AF_INET, kind)] = _bind(socket.AF_INET, kind, p)
+                        break
+                    except OSError:
+                        continue
+        fams = []
+        for fam in (socket.AF_INET, socket.AF_INET6):
+            s = socks.get((fam, socket.SOCK_STREAM))
+            if s is not None:
+                self.servers.append(await asyncio.start_server(self._incoming, sock=s))
+                if fam == socket.AF_INET:
+                    self.port = s.getsockname()[1]
+            if (fam, socket.SOCK_DGRAM) in socks and (fam == socket.AF_INET or s is not None):
+                fams.append(fam)
+        self.ipv6 = socket.AF_INET6 in fams
         # UDP: the DHT and uTP share one socket
         node_id = os.urandom(20)
         for fam in fams:
-            sock = None
-            for udp_port in ((self.udp_port or self.port, 0) if fam == socket.AF_INET6 else (self.port, 0)):
-                try:
-                    sock = _bind(fam, socket.SOCK_DGRAM, udp_port)
-                    break
-                except OSError:
-                    continue
-            if sock is None:
-                continue
+            sock = socks[(fam, socket.SOCK_DGRAM)]
             mux = UDPMux(self._inbound6_udp if fam == socket.AF_INET6 else None)
             await loop.create_datagram_endpoint(lambda m=mux: m, sock=sock)
             if fam == socket.AF_INET:

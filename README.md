@@ -491,7 +491,8 @@ downloaded yet waits for it instead of failing.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
 
-### 1.9.50 - Remove several torrents at once
+### 1.9.51 - Remove several torrents at once; one port for everything
+- **Fixed:** when another program held the UDP side of the listening port, uTP and the DHT quietly moved to a different port than the one peers were told, so uTP peers could not connect to you. The app now picks a port that is free for TCP and UDP, over IPv4 and IPv6, together. (1.9.50 was never published: its build caught this.)
 - **Select several torrents with the mouse:** press on one and drag over the others (the list scrolls along at its edges). Ctrl+click and Shift+click still add single torrents or ranges, and the right-click menu has **Select all** (Ctrl+A) and **Select all finished**.
 - **Remove asks once for all of them**, lists what will be removed, and has clear buttons: *Keep files*, *Delete files* or *Cancel* (it used to be a Yes / No / Cancel question). The Delete key does the same.
 
