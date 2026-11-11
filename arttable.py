@@ -47,6 +47,7 @@ class ArtTable(tk.Canvas):
         for seq, fn in (("<Configure>", lambda e: self.redraw()), ("<Button-1>", self._click),
                         ("<Shift-Button-1>", lambda e: self._click(e, shift=True)),
                         ("<Control-Button-1>", lambda e: self._click(e, ctrl=True)),
+                        ("<B1-Motion>", self._drag_select), ("<ButtonRelease-1>", lambda e: self._end_drag()),
                         ("<MouseWheel>", self._wheel), ("<Button-4>", lambda e: self.yview("scroll", -3, "units")),
                         ("<Button-5>", lambda e: self.yview("scroll", 3, "units")),
                         ("<Motion>", self._motion), ("<Leave>", lambda e: self._set_hover(None)),
@@ -356,6 +357,29 @@ class ArtTable(tk.Canvas):
         else:
             self._anchor = iid
             self.selection_set(iid)
+        self._dragging = self.selectmode == "extended" and not (shift or ctrl)
+
+    def _drag_select(self, e):
+        """Press on a row and drag over others: they are all selected (mouse-only multiple selection). Past the
+        top or bottom edge the list scrolls along."""
+        if not getattr(self, "_dragging", False) or self._anchor not in self.order:
+            return
+        h = self.winfo_height()
+        if e.y > h - self.rowheight // 3:
+            self.yview("scroll", 1, "units")
+        elif e.y < self.head_height + self.rowheight // 3:
+            self.yview("scroll", -1, "units")
+        y = min(max(e.y, self.head_height + 1), h - 2)
+        iid = self.identify_row(y)
+        if not iid or iid not in self.order:
+            return
+        a, b = sorted((self.order.index(self._anchor), self.order.index(iid)))
+        rng = tuple(self.order[a:b + 1])
+        if tuple(self.sel) != rng:
+            self.selection_set(rng)
+
+    def _end_drag(self):
+        self._dragging = False
 
     def _key(self, step):
         if not self.order:

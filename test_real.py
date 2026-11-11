@@ -477,6 +477,26 @@ def main():
                     pass
             app.cfg["player_where"] = "window"
         print("Media: episode queue, subtitles, skip extras, watched marks, library, LAN link, in-tab player: OK")
+        # several torrents with the mouse: press on one row and drag over the next ones; Ctrl+A; "all finished"
+        app.set_filter("all"); app.search.set(""); app.refresh(); root.update()
+        tr = app.tree
+        rows = [h for h in tr.get_children() if h in app._snap_by_hash]
+        if len(rows) >= 3:
+            tr.yview_moveto(0); root.update()
+            E = lambda i: type("E", (), {"x": 50, "y": tr.head_height + i * tr.rowheight + tr.rowheight // 2,
+                                          "x_root": 0, "y_root": 0})()
+            tr._click(E(0)); tr._drag_select(E(1)); tr._drag_select(E(2)); tr._end_drag()
+            assert list(tr.selection()) == rows[:3], (tr.selection(), rows[:3])
+            tr._drag_select(E(0)); assert list(tr.selection()) == rows[:3], "a drag after the release must not select"
+            app.select_all(); assert set(tr.selection()) == set(rows)
+            app.select_all(finished=True)
+            fin = {h for h in rows if app._finished(app._snap_by_hash[h])}
+            assert set(tr.selection()) == fin, (tr.selection(), fin)
+            asked = []
+            with mock.patch.object(app, "ask_remove", side_effect=lambda n, listing: asked.append((n, listing))):
+                app.tree.selection_set(tuple(rows[:2])); app.remove()       # Cancel: nothing removed
+            assert asked and asked[0][0] == 2 and asked[0][1].count("•") == 2 and all(h in app.mgr.sessions for h in rows[:2])
+            print("several torrents: drag-select, select all / all finished, one Remove question: OK")
         # small window: sidebar scrolls instead of being cut off
         root.geometry("900x520"); root.update(); time.sleep(0.2); root.update()
         app._layout_sidebar()

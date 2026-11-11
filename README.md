@@ -491,6 +491,10 @@ downloaded yet waits for it instead of failing.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
 
+### 1.9.50 - Remove several torrents at once
+- **Select several torrents with the mouse:** press on one and drag over the others (the list scrolls along at its edges). Ctrl+click and Shift+click still add single torrents or ranges, and the right-click menu has **Select all** (Ctrl+A) and **Select all finished**.
+- **Remove asks once for all of them**, lists what will be removed, and has clear buttons: *Keep files*, *Delete files* or *Cancel* (it used to be a Yes / No / Cancel question). The Delete key does the same.
+
 ### 1.9.49 - Accurate speeds, whole IPv6 addresses in the Peers tab
 - **Fixed: download and upload speeds were shown too high**, by about a quarter on a fast download (14.5 MB/s shown while 11.5 MB/s arrived). The speed was worked out once a second assuming exactly one second had passed, but a busy client checks a little late. It now uses the time that really passed: on the same download it showed 12.00 MB/s for 12.01 MB/s received. ETAs are more accurate too. (Speeds are in binary units like other clients: 1 MB/s = 1,048,576 bytes per second, about 8.4 Mbit/s.)
 - The Peers tab's Address column is now wide enough for a whole IPv6 address and its port (they were cut off), and a new **IP** column next to it says whether each connection is IPv4 or IPv6.

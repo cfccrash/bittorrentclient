@@ -388,6 +388,8 @@ class App:
                         ("<Control-F>", self.search_online)):
             root.bind(seq, lambda e, fn=fn: fn())
         self.tree.bind("<Delete>", lambda e: self.remove())
+        self.tree.bind("<Control-a>", lambda e: (self.select_all(), "break")[1])
+        self.tree.bind("<Control-A>", lambda e: (self.select_all(), "break")[1])
         self.tree.bind("<space>", self._on_space)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.bind("<F11>", lambda e: self.toggle_fullscreen())
@@ -1801,7 +1803,10 @@ class App:
                                   "Download in order (for streaming)", variable=self.seq_var,
                                   command=self.toggle_sequential, **extra)
         self.menu.add_separator()
-        self.menu.add_command(label="Remove", command=self.remove)
+        self.menu.add_command(label="Select all  (Ctrl+A)", command=self.select_all)
+        self.menu.add_command(label="Select all finished", command=lambda: self.select_all(finished=True))
+        self.menu.add_separator()
+        self.menu.add_command(label="Remove\u2026  (Del)", command=self.remove)
 
     def _rebuild_menus(self):
         """The Priority and Category sub-menus show what the selected torrents currently use."""
@@ -2662,13 +2667,36 @@ class App:
         else:
             self.resume()
 
+    @staticmethod
+    def _finished(s):
+        return s.get("raw_state") in ("Seeding", "Finished") or s.get("progress", 0) >= 0.9999
+
+    def select_all(self, finished=False):
+        """Select every torrent shown in the list (with `finished`: only the ones that have finished downloading)."""
+        rows = [h for h in self.tree.get_children() if h in self._snap_by_hash
+                and (not finished or self._finished(self._snap_by_hash[h]))]
+        self.tree.selection_set(tuple(rows))
+        if rows:
+            self.tree.see(rows[0])
+        self.tree.focus_set()
+
+    def ask_remove(self, count, listing):
+        """Keep files (False), delete them too (True) or cancel (None)."""
+        what = "this torrent" if count == 1 else "these %d torrents" % count
+        return dialogs.MessageDialog(
+            self, "Remove", "Remove %s from the list?\n\n%s\n\nKeep files: what was downloaded stays in its folder.\n"
+                            "Delete files: it is deleted from your disk too." % (what, listing), kind="question",
+            buttons=(("Keep files", False), ("Delete files", True), ("Cancel", None)), cancel=None).show()
+
     def remove(self):
         sel = self._selected()
         if not sel:
             return
-        ans = messagebox.askyesnocancel(
-            APP, "Remove %d torrent(s)?\n\nYes: also delete the downloaded files\nNo: keep the files" % len(sel),
-            parent=self.root)
+        names = [self._snap_by_hash.get(h, {}).get("name", h[:8]) for h in sel]
+        shown = "\n".join("  \u2022 " + n for n in names[:8])
+        if len(names) > 8:
+            shown += "\n  \u2026 and %d more" % (len(names) - 8)
+        ans = self.ask_remove(len(sel), shown)
         if ans is None:
             return
         for h in sel:

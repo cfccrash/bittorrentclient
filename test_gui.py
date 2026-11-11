@@ -501,7 +501,10 @@ def main():
 
     # ---- removing torrents clears rows and bars
     app.refresh()   # pick up the magnet added through the dialog
+    asked = []
+    app.ask_remove = lambda n, listing: asked.append((n, listing)) or False      # "Keep files"
     app.tree.selection_set(tuple(app.tree.order)); app.remove(); time.sleep(0.4); app.refresh()
+    assert asked and asked[0][0] >= 1 and "•" in asked[0][1], asked
     assert not app.tree.rows and not app.progress and app._empty_shown is True
 
     # ---- every column (headings and cell text) is left-aligned
