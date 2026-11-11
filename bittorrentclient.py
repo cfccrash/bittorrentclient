@@ -91,6 +91,11 @@ def rate0(r):
     return fmt_rate(r) if r >= 1 else "0 B/s"
 
 
+VECTOR_ICONS = dict(exit="power", restart="refresh", settings="gear", resume="play", pause="pause", remove="trash",
+                    files="list", folder="folder", add="plus", magnet="link", search="search", create="pencil",
+                    rss="rss", library="video")
+
+
 class _DrawnButton:
     """A button drawn on a canvas over the window's artwork: no box of its own at rest (a `raised` one keeps a light
     face), a light fill when pointed at or pressed. Has the ToolButton bits the App uses (restyle, set_enabled)."""
@@ -98,6 +103,7 @@ class _DrawnButton:
     def __init__(self, app, key, icon, text, command, tip, raised=False):
         self.app, self.key, self.icon, self.text, self.command, self.tip = app, key, icon, text, command, tip
         self.raised, self.enabled, self.P = raised, True, None
+        self.vector = None               # an icon drawn with lines (ui.draw_icon) instead of a font glyph (Linux)
         self.flat = True                 # never a fill - pointed at, its text (or icon) turns bold instead
         self.x0 = self.y0 = self.x1 = self.y1 = 0
         self.on_change = None            # called when it needs redrawing (enabled state changed)
@@ -117,6 +123,9 @@ class _DrawnButton:
 
     def need(self):
         F = self.app.F
+        if self.vector:
+            vs = self.app.px(16)
+            return int(vs + 28 if not self.text else 12 + vs + 8 + F.ui.measure(self.text) + 14)
         if not self.text:
             return int(F.icon.measure(self.icon)) + 28
         w = F.ui.measure(self.text) + 14
@@ -141,6 +150,15 @@ class _DrawnButton:
         fg = P["fg"] if self.enabled else P["disabled"]
         bold = self.flat and self.enabled and (hover or down)
         mid = (y0 + y1) // 2
+        if self.vector:
+            vs = app.px(16)
+            if not self.text:
+                ui.draw_icon(cv, self.vector, (x0 + x1) // 2, mid, vs, fg, bold, tags)
+                return
+            ui.draw_icon(cv, self.vector, x0 + 12 + vs // 2, mid, vs, fg, bold, tags)
+            cv.create_text(x0 + 12 + vs + 8, mid, anchor="w", text=self.text, font=F.bold if bold else F.ui, fill=fg,
+                           tags=tags)
+            return
         if not self.text:
             cx = (x0 + x1) // 2
             cv.create_text(cx, mid, text=self.icon, font=F.icon, fill=fg, tags=tags)
@@ -571,7 +589,11 @@ class App:
         self._tb_items = []
 
         def add(key, icon, text, cmd, tip, raised=False, left=False):
-            b = _DrawnButton(self, key, icon, text, cmd, tip, raised=raised)
+            if not self.F.has_icons:              # no Windows icon font (Linux): drawn icons, same layout
+                b = _DrawnButton(self, key, "", "" if left else text, cmd, tip, raised=raised)
+                b.vector = VECTOR_ICONS.get(key)
+            else:
+                b = _DrawnButton(self, key, icon, text, cmd, tip, raised=raised)
             b.left, b.on_change = left, lambda: self._later("toolbar", self._draw_toolbar)
             self.btn[key] = b
             self._tb_items.append(b)
@@ -687,6 +709,8 @@ class App:
                 ("rss", ui.ICON_RSS, "RSS feeds", self.rss_dialog, "Add torrents automatically from RSS / Atom feeds"),
                 ("library", ui.ICON_LIBRARY, "Library", self.library_dialog, "Everything you can watch, with continue-watching")):
             b = _DrawnButton(self, key, icon if self.F.has_icons else "", text, cmd, tip)
+            if not self.F.has_icons:
+                b.vector = VECTOR_ICONS.get(key)
             b.flat = True                       # the column has no boxes: pointed at, the text turns bold
             self._side_btns.append(b)
             self.btn[key] = b

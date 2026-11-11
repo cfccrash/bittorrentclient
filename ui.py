@@ -534,6 +534,74 @@ def center_over(win, parent):
     win.geometry("+%d+%d" % (max(0, x), max(0, y)))
 
 
+def draw_icon(cv, name, cx, cy, size, col, bold=False, tags=()):
+    """Toolbar / sidebar icons drawn with lines - where the Windows icon fonts are missing (Linux)."""
+    h = size / 2.0
+    w = max(1.5, size / 10.0) * (1.6 if bold else 1.0)
+    kw = dict(fill=col, width=w, capstyle="round", joinstyle="round", tags=tags)
+    L = lambda *p: cv.create_line(*p, **kw)
+    O = lambda x0, y0, x1, y1: cv.create_oval(x0, y0, x1, y1, outline=col, width=w, tags=tags)
+    R = lambda x0, y0, x1, y1: cv.create_rectangle(x0, y0, x1, y1, outline=col, width=w, tags=tags)
+    A = lambda r, start, extent, dx=0, dy=0: cv.create_arc(cx + dx - r, cy + dy - r, cx + dx + r, cy + dy + r,
+                                                           start=start, extent=extent, style="arc", outline=col,
+                                                           width=w, tags=tags)
+    if name == "power":
+        A(h * .75, 120, 300)
+        L(cx, cy - h * .95, cx, cy - h * .1)
+    elif name == "refresh":
+        A(h * .75, 60, 280)
+        L(cx + h * .38, cy - h * 1.0, cx + h * .38, cy - h * .6, cx + h * .78, cy - h * .6)
+    elif name == "gear":
+        import math
+        O(cx - h * .3, cy - h * .3, cx + h * .3, cy + h * .3)
+        O(cx - h * .65, cy - h * .65, cx + h * .65, cy + h * .65)
+        for i in range(8):
+            a = i * math.pi / 4
+            L(cx + math.cos(a) * h * .65, cy + math.sin(a) * h * .65, cx + math.cos(a) * h * .92, cy + math.sin(a) * h * .92)
+    elif name == "play":
+        cv.create_polygon(cx - h * .5, cy - h * .75, cx + h * .75, cy, cx - h * .5, cy + h * .75, outline=col, fill="",
+                          width=w, joinstyle="round", tags=tags)
+    elif name == "pause":
+        R(cx - h * .55, cy - h * .7, cx - h * .2, cy + h * .7)
+        R(cx + h * .2, cy - h * .7, cx + h * .55, cy + h * .7)
+    elif name == "trash":
+        L(cx - h * .8, cy - h * .55, cx + h * .8, cy - h * .55)
+        L(cx - h * .25, cy - h * .55, cx - h * .25, cy - h * .85, cx + h * .25, cy - h * .85, cx + h * .25, cy - h * .55)
+        L(cx - h * .6, cy - h * .55, cx - h * .5, cy + h * .85, cx + h * .5, cy + h * .85, cx + h * .6, cy - h * .55)
+    elif name == "list":
+        for dy in (-.55, 0, .55):
+            L(cx - h * .8, cy + dy * h, cx - h * .65, cy + dy * h)
+            L(cx - h * .35, cy + dy * h, cx + h * .85, cy + dy * h)
+    elif name == "folder":
+        L(cx - h * .85, cy + h * .7, cx - h * .85, cy - h * .65, cx - h * .3, cy - h * .65, cx - h * .15, cy - h * .45,
+          cx + h * .85, cy - h * .45, cx + h * .85, cy + h * .7, cx - h * .85, cy + h * .7)
+    elif name == "plus":
+        L(cx, cy - h * .75, cx, cy + h * .75)
+        L(cx - h * .75, cy, cx + h * .75, cy)
+    elif name == "link":
+        A(h * .38, 90, 180, dx=-h * .35)
+        A(h * .38, -90, 180, dx=h * .35)
+        L(cx - h * .35, cy - h * .38, cx + h * .1, cy - h * .38)
+        L(cx - h * .1, cy + h * .38, cx + h * .35, cy + h * .38)
+        L(cx - h * .3, cy, cx + h * .3, cy)
+    elif name == "search":
+        O(cx - h * .75, cy - h * .75, cx + h * .25, cy + h * .25)
+        L(cx + h * .15, cy + h * .15, cx + h * .8, cy + h * .8)
+    elif name == "pencil":
+        cv.create_polygon(cx - h * .8, cy + h * .8, cx - h * .7, cy + h * .35, cx + h * .45, cy - h * .8,
+                          cx + h * .8, cy - h * .45, cx - h * .35, cy + h * .7, outline=col, fill="", width=w,
+                          joinstyle="round", tags=tags)
+    elif name == "rss":
+        cv.create_oval(cx - h * .8, cy + h * .45, cx - h * .45, cy + h * .8, fill=col, outline="", tags=tags)
+        for r in (.75, 1.3):
+            cv.create_arc(cx - h * .7 - h * r, cy + h * .7 - h * r, cx - h * .7 + h * r, cy + h * .7 + h * r,
+                          start=0, extent=90, style="arc", outline=col, width=w, tags=tags)
+    elif name == "video":
+        R(cx - h * .85, cy - h * .55, cx + h * .3, cy + h * .55)
+        cv.create_polygon(cx + h * .35, cy - h * .1, cx + h * .85, cy - h * .45, cx + h * .85, cy + h * .45,
+                          cx + h * .35, cy + h * .1, outline=col, fill="", width=w, tags=tags)
+
+
 def open_path(path):
     """Show a folder (or open a file) with the system: Explorer on Windows, the file manager on Linux."""
     if hasattr(os, "startfile"):

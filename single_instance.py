@@ -35,6 +35,10 @@ def release():
     """Give up the instance port (a restart starts the new copy before this process has fully exited)."""
     global _listener
     if _listener is not None:
+        try:                               # (on Linux close() alone does not wake the thread waiting in accept(),
+            _listener.shutdown(socket.SHUT_RDWR)   # which keeps the port taken - shutdown() does)
+        except OSError:
+            pass
         try:
             _listener.close()
         except OSError:

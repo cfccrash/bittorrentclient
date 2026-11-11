@@ -85,7 +85,7 @@ jobs:
         run: xvfb-run -a -s "-screen 0 1920x1080x24" python run_tests.py
       - name: Screenshots
         if: always()
-        run: xvfb-run -a -s "-screen 0 1920x1080x24" python tools/linux_screens.py screens
+        run: PLAYER_VO=x11 xvfb-run -a -s "-screen 0 1920x1080x24" python tools/linux_screens.py screens
       - uses: actions/upload-artifact@v7
         if: always()
         with:

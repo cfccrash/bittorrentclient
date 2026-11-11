@@ -134,6 +134,40 @@ def _elide(text, font, room):
     return text + "\u2026"
 
 
+_x11_handler = []
+
+
+def _x11_errors_not_fatal():
+    """On X11 the video engine creates and destroys its own window inside one of ours; Tk can then ask the X server
+    about a window that just went away. Xlib's default answer to that BadWindow error is to end the program - ignore
+    BadWindow / BadDrawable instead (Linux only, installed once)."""
+    if not sys.platform.startswith("linux") or _x11_handler:
+        return
+    try:
+        import ctypes
+        import ctypes.util
+
+        class XErrorEvent(ctypes.Structure):
+            _fields_ = [("type", ctypes.c_int), ("display", ctypes.c_void_p), ("resourceid", ctypes.c_ulong),
+                        ("serial", ctypes.c_ulong), ("error_code", ctypes.c_ubyte), ("request_code", ctypes.c_ubyte),
+                        ("minor_code", ctypes.c_ubyte)]
+        x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+        HANDLER = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(XErrorEvent))
+        x11.XSetErrorHandler.restype = ctypes.c_void_p
+        x11.XSetErrorHandler.argtypes = [ctypes.c_void_p]
+        prev = []
+
+        def handler(display, ev):
+            if ev.contents.error_code in (3, 9):            # BadWindow, BadDrawable: a window that is already gone
+                return 0
+            return HANDLER(prev[0])(display, ev) if prev and prev[0] else 0
+        cb = HANDLER(handler)
+        prev.append(x11.XSetErrorHandler(ctypes.cast(cb, ctypes.c_void_p)))
+        _x11_handler.append(cb)                             # keep the callback alive
+    except Exception:
+        pass
+
+
 class _Volume:
     """The volume (0-130) the drawn slider shows; set() also changes mpv's volume."""
 
@@ -318,6 +352,9 @@ class PlayerPanel:
         if o.get("hwdec", True):
             opts.setdefault("hwdec", "auto-safe")
         opts.setdefault("window-dragging", "no")   # a click on the video is play/pause, not "move mpv's window"
+        if os.environ.get("PLAYER_VO"):             # (tests / CI: a video output that works on a virtual display)
+            opts.setdefault("vo", os.environ["PLAYER_VO"])
+        _x11_errors_not_fatal()
         for k, key in (("alang", "alang"), ("slang", "slang")):
             if o.get(k):
                 opts.setdefault(key, o[k])
@@ -1357,6 +1394,9 @@ class PlayerPanel:
 
     def close(self):
         self._save_pos()
+        m, self.mpv = self.mpv, None        # stop the video first: its window lives inside ours (X11 errors otherwise)
+        if m:
+            m.close()
         for aid in list(self._afters):
             try:
                 self.top.after_cancel(aid)
