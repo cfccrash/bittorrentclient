@@ -26,7 +26,7 @@ def make(name, secs, chapters=False):
             meta = os.path.join(tmp, "meta.txt")
             open(meta, "w").write(";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=30000\ntitle=Intro\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=30000\nEND=%d\ntitle=Main\n" % (secs * 1000))
             cmd += ["-i", meta, "-map_metadata", "2"]
-        subprocess.run(cmd + ["-c:v", "libx264", "-c:a", "aac", "-shortest", p], check=True)
+        subprocess.run(cmd + ["-c:v", "libx264", "-g", "25", "-c:a", "aac", "-shortest", p], check=True)
         return p
     p = p.rsplit(".", 1)[0] + ".mkv"                    # libmpv's encoder: video + a sine tone, no chapters
     m = mpvlib.Mpv(options={"vo": "null", "ao": "null", "o": p, "ovc": "libx264", "oac": "aac", "ovcopts": "preset=ultrafast,g=25"})
