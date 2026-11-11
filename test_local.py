@@ -1027,11 +1027,13 @@ t0 = time.time(); m.shutdown(); print("shutdown %%.1f" %% (time.time() - t0), fl
             mux.datagram_received(b"q", ("2001:db8::2", 5, 0, 0))         # unsolicited: reachable
             assert got == [("2001:db8::2", 5)], got
             rm = Manager(0, dht=False)
+            real_addr, TC2.ipv6_address = TC2.ipv6_address, lambda: "2001:db8::9"   # the same on any network (CI has no IPv6)
             try:
                 assert rm.ipv6_reachable() is None and "checking" in rm.ipv6_status()
                 rm._inbound6_udp(("2a00:1450:4001::1", 6881)); rm._inbound6_udp(("fe80::1", 6881))
                 assert rm.inbound6["udp"] == 1 and rm.ipv6_reachable() is True and "peers can reach you" in rm.ipv6_status()
             finally:
+                TC2.ipv6_address = real_addr
                 rm.shutdown()
             print("IPv6 reachability: unsolicited packets counted, replies and local addresses ignored: OK")
 

@@ -491,7 +491,8 @@ downloaded yet waits for it instead of failing.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
 
-### 1.9.47 - IPv6 firewall, player without a title bar, old update installers removed
+### 1.9.48 - IPv6 firewall, snapping player without a title bar, old update installers removed
+(1.9.47 was never published: its build stopped at a test that needed IPv6 Internet on the build machine.)
 - **The detached player and the mini player have no title bar any more**: just the picture. Drag the picture to move the window (a plain click still plays / pauses, a double-click goes full screen), drag its edges to resize it, and close it with the new ✕ at the right end of the controls (or Alt+F4). In the narrow mini player the time display shortens instead of running into the buttons.
 - **The player window snaps like any Windows window**: drag the picture to the left or right edge for half the screen, into a corner for a quarter, or to the top to maximise (Snap Assist then offers windows for the rest; Win+arrow keys work too). The mini player keeps its size instead: let it go near an edge or corner and it settles neatly against it, and it goes back to the size and place it came from (maximised too).
 - **IPv6: the router's firewall is opened for you when it allows it.** IPv6 has no port forwarding, but most routers' firewalls block incoming IPv6 connections, so IPv6 peers could not connect to you. With *Automatic port forwarding* on, the app now asks the router to let its port in: PCP over IPv6 first, then UPnP's IPv6 firewall control (IGD 2). The pinholes are renewed while the app runs and removed when it exits.
