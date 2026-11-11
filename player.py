@@ -204,13 +204,15 @@ class PlayerPanel:
     stopped = False
 
     def __init__(self, parent, top, queue=(), index=0, session=None, lib=None, options=None, on_fullscreen=None,
-                 on_popout=None, on_end=None, key_widget=None, popout_label="Detach", on_mini=None,
+                 on_popout=None, on_end=None, key_widget=None, popout_label="Detach", on_mini=None, key_scope=None,
                  mini_tip="Mini player (stays on top in a corner)", is_full=None):
         self.popout_label = popout_label
         self.on_mini, self.mini_tip, self.is_full = on_mini, mini_tip, is_full
+        self.key_scope = key_scope         # fn() -> bool: may the shortcuts act now (the Player tab is showing)?
         self.next_cancelled = False
         self._last_pos = 0.0
         self._eof_done = False
+        self._afters = set()
         self.parent, self.top = parent, top
         self.sess = session or {}
         self.queue, self.index = list(queue), index
@@ -237,6 +239,7 @@ class PlayerPanel:
         o = self.sess.get("opts", {})
         if o.get("hwdec", True):
             opts.setdefault("hwdec", "auto-safe")
+        opts.setdefault("window-dragging", "no")   # a click on the video is play/pause, not "move mpv's window"
         for k, key in (("alang", "alang"), ("slang", "slang")):
             if o.get(k):
                 opts.setdefault(key, o[k])
@@ -248,11 +251,12 @@ class PlayerPanel:
             return
         self.error = None
         # Keys and clicks while the video window itself has the focus (it is a separate native window, so Tk never sees them).
-        binds = [("f", "script-message tk-fs"), ("ESC", "script-message tk-fs-off"), ("MBTN_LEFT_DBL", "script-message tk-fs"),
+        # (mouse clicks / wheel on the video are handled by Tk - see _build; mpv does not get them when embedded)
+        binds = [("f", "script-message tk-fs"), ("ESC", "script-message tk-fs-off"),
                  ("n", "script-message tk-next"), ("p", "script-message tk-prev"), ("?", "script-message tk-help"),
-                 ("F1", "script-message tk-help"), ("MBTN_LEFT", "cycle pause"), ("SPACE", "cycle pause"),
+                 ("F1", "script-message tk-help"), ("SPACE", "cycle pause"),
                  ("LEFT", "seek -5"), ("RIGHT", "seek 5"), ("Shift+LEFT", "seek -30"), ("Shift+RIGHT", "seek 30"),
-                 ("UP", "add volume 5"), ("DOWN", "add volume -5"), ("WHEEL_UP", "add volume 5"), ("WHEEL_DOWN", "add volume -5"),
+                 ("UP", "add volume 5"), ("DOWN", "add volume -5"),
                  ("PGUP", "add chapter -1"), ("PGDWN", "add chapter 1"), ("m", "cycle mute"), ("z", "add sub-delay -0.1"),
                  ("x", "add sub-delay 0.1"), ("a", "script-message tk-aspect"), ("s", "script-message tk-stop"), (",", "add sub-scale -0.1"), (".", "add sub-scale 0.1"),
                  ("j", "seek -10"), ("k", "cycle pause"), ("l", "seek 10"), ("S", "script-message tk-shot"),
@@ -263,7 +267,9 @@ class PlayerPanel:
                 self.mpv.command("keybind", key, cmd)
             except mpvlib.MpvError:
                 pass
-        self.bind_keys(key_widget or self.top)
+        # key_widget "all": the player sits in a tab of the main window - its keys work wherever the keyboard is in
+        # that window while the tab shows (key_scope), except in text fields
+        self.bind_keys(key_widget or self.top, everywhere=key_widget == "all")
         self.bind_keys(self.osd)
         if self.queue:
             self.play_index(self.index)
@@ -282,6 +288,10 @@ class PlayerPanel:
             self.scale = 1.0
         self.video = tk.Frame(p, bg="black", highlightthickness=0)
         self.video.pack(fill="both", expand=True)
+        # the mouse on the video: click = play / pause, double-click = full screen, wheel = volume
+        self.video.bind("<Button-1>", lambda e: (self.toggle(), self._wake()))
+        self.video.bind("<Double-Button-1>", lambda e: self.fullscreen())
+        self.video.bind("<MouseWheel>", lambda e: (self.vol.set(self.vol.get() + (5 if e.delta > 0 else -5)), self._wake()))
         families = set(tkfont.families(p))
         self.f_icon = tkfont.Font(p, family=next((f for f in ICON_FONTS if f in families), "Segoe UI Symbol"), size=13)
         self.f_big = tkfont.Font(p, family=self.f_icon.actual("family"), size=17)
@@ -330,7 +340,27 @@ class PlayerPanel:
         self._tip = ui.Tooltip(cv, lambda: (self._hot or {}).get("tip", ""), lambda: ui.DARK, above=True,
                                region=self._tip_region)
         self._card = None                          # the "Up next" card
-        self.top.after(150, self._osd_tick)
+        self.after(150, self._osd_tick)
+
+    def after(self, ms, fn):
+        """A timer on the player's window that close() cancels (only ours: other timers of the app keep running).
+        A timer left to fire on a destroyed window raised an error."""
+        holder = []
+
+        def run():
+            if holder:
+                self._afters.discard(holder[0])
+            fn()
+        try:
+            aid = self.top.after(ms, run)
+        except tk.TclError:
+            return None
+        holder.append(aid)
+        self._afters.add(aid)
+        return aid
+
+    def _wake(self):
+        self._last_move = time.time()
 
     def _no_activate(self, w):
         """Clicking the strip must not take the keyboard away from the player / main window."""
@@ -623,7 +653,7 @@ class PlayerPanel:
         except (tk.TclError, Exception):
             pass
         try:
-            self.top.after(120, self._osd_tick)
+            self.after(120, self._osd_tick)
         except tk.TclError:
             pass
 
@@ -654,7 +684,7 @@ class PlayerPanel:
             c.cv.pack()
             c.cv.bind("<ButtonRelease-1>", self._card_click)
             c.cv.bind("<Motion>", lambda e: self._card_draw(e.x, e.y))
-            self.top.after(50, lambda: self._no_activate(c))
+            self.after(50, lambda: self._no_activate(c))
         cw, ch = px(340), px(92)
         c = self._card
         geo = "%dx%d+%d+%d" % (cw, ch, vx + vw - cw - px(20), vy + vh - ch - px(BAR_H) - px(12))
@@ -700,9 +730,13 @@ class PlayerPanel:
                 self._card = None
                 return
 
-    def bind_keys(self, w):
+    def bind_keys(self, w, everywhere=False):
         def key(seq, fn):
-            w.bind(seq, lambda e: (fn(), "break")[1] if self._key_ok(e) else None)
+            handler = lambda e: (fn(), "break")[1] if self._key_ok(e) else None
+            if everywhere:
+                self.top.bind_all(seq, handler)      # (replaces the previous player's: one player per window)
+            else:
+                w.bind(seq, handler)
         key("<space>", self.toggle)
         key("<Left>", lambda: self.rel(-5)); key("<Right>", lambda: self.rel(5))
         key("<Shift-Left>", lambda: self.rel(-30)); key("<Shift-Right>", lambda: self.rel(30))
@@ -721,12 +755,22 @@ class PlayerPanel:
             key(str(n), lambda n=n: self.seek_percent(n * 10))
 
     def _key_ok(self, e):
-        """Shortcuts apply when this player has the focus (not while typing in another widget of the main window)."""
-        try:
-            w = self.top.focus_get()
-        except Exception:
-            return True
-        return w is None or isinstance(w, (tk.Frame, tk.Canvas, tk.Toplevel, tk.Tk, tk.Button)) or str(w).startswith(str(self.parent))
+        """Shortcuts apply while this player is open (and its tab shows), except while typing in a text field."""
+        if not self.mpv:
+            return False
+        if self.key_scope is not None:
+            try:
+                if not self.key_scope():
+                    return False
+            except Exception:
+                return False
+        w = getattr(e, "widget", None)
+        try:                                   # keys typed in a dialog (Settings ...) are not the player's
+            if w is not None and str(w.winfo_toplevel()) not in (str(self.top.winfo_toplevel()), str(self.osd)):
+                return False
+        except (tk.TclError, AttributeError):
+            pass
+        return not isinstance(w, (tk.Entry, tk.Text, tk.Spinbox, ttk.Entry, ttk.Combobox, ttk.Spinbox))
 
     # ---- queue
     def play_index(self, i):
@@ -1167,7 +1211,7 @@ class PlayerPanel:
                 self._save_pos()
         except Exception:
             pass
-        self.top.after(250, self._tick)
+        self.after(250, self._tick)
 
     def _loaded(self):
         m, e = self.mpv, self.cur or {}
@@ -1222,6 +1266,12 @@ class PlayerPanel:
 
     def close(self):
         self._save_pos()
+        for aid in list(self._afters):
+            try:
+                self.top.after_cancel(aid)
+            except tk.TclError:
+                pass
+        self._afters.clear()
         for w in (getattr(self, "_card", None), getattr(self, "osd", None)):
             try:
                 if w is not None:
@@ -1245,7 +1295,7 @@ class PlayerWindow:
     """A player in a window of its own (also the standalone program). `master` None makes its own root window."""
 
     def __init__(self, master=None, target=None, title="", map_url=None, lib=None, options=None, on_close=None,
-                 queue=None, index=0, session=None, on_dock=None, mini=False):
+                 queue=None, index=0, session=None, on_dock=None, mini=False, full=False):
         self.own_root = master is None
         self.win = tk.Tk() if self.own_root else tk.Toplevel(master)
         self.win.title(title or "Player")
@@ -1273,14 +1323,19 @@ class PlayerWindow:
         self.mpv = self.panel.mpv
         self.win.protocol("WM_DELETE_WINDOW", self.close)
         if self.panel.error:
-            self.win.after(100, lambda: self._no_lib(target, self.panel.error))
+            self.panel.after(100, lambda: self._no_lib(target, self.panel.error))
             return
         self.win.bind("<Motion>", self._motion)
-        self.panel.video.bind("<Double-Button-1>", lambda e: self.fullscreen())
-        self.panel.video.bind("<Button-1>", lambda e: self.panel.toggle())
-        self.win.after(500, self._hide_bar_tick)
+        self.panel.after(500, self._hide_bar_tick)
         if mini:
-            self.win.after(50, lambda: self.set_mini(True))
+            self.panel.after(50, lambda: self.set_mini(True))
+        # opened full screen from the Player tab: leaving full screen brings it back into the tab
+        self._back_to_tab = bool(full and on_dock)
+        self._on_dock = on_dock
+        if full:
+            self.panel.after(80, lambda: self.fullscreen(True))
+        if master is not None:            # a new window from the main one: give it the keyboard (Esc, Space ...)
+            self.panel.after(150, self._take_focus)
 
     # kept for callers/tests that used the old single-class API
     def __getattr__(self, name):
@@ -1313,6 +1368,16 @@ class PlayerWindow:
         self.last_move = time.time()
         self.panel._last_move = time.time()
         self.panel._redraw()
+        if not self.full and getattr(self, "_back_to_tab", False):
+            self._back_to_tab = False
+            self.panel.after(50, lambda: self._on_dock(self))
+
+    def _take_focus(self):
+        try:
+            self.win.lift()
+            self.win.focus_force()
+        except tk.TclError:
+            pass
 
     def set_mini(self, on):
         """Mini player: a small window that stays on top in the bottom-right corner (the controls shrink to the
@@ -1369,10 +1434,10 @@ class PlayerWindow:
         elif self.full:
             self._cursor(False)
         if p.mpv:
-            self.win.after(500, self._hide_bar_tick)
+            self.panel.after(500, self._hide_bar_tick)
 
     def close(self):
-        self.panel.close()
+        self.panel.close()                # (also cancels the timers the panel and this window started)
         try:
             self.win.destroy()
         except tk.TclError:

@@ -64,6 +64,9 @@ Current version is in `version.py`; release notes are the sections at the bottom
   shows and hides it; topmost mirrors the window's (mini player). mpvlib sets keep-open: the end of a file is
   'eof-reached', there is no end-file event. Making a window topmost right after geometry() undoes the move
   (update_idletasks first). test_player makes its clips with libmpv's encoder when ffmpeg is missing.
+  Embedded mpv gets no mouse input: clicks / double-clicks / wheel on the video are Tk bindings on `panel.video`.
+  In the tab, player keys are bind_all + key_scope (tab showing). Panel timers go through `panel.after` (close
+  cancels only those - `after info` lists the whole app's timers).
 - Frameless windows (`overrideredirect`) are not stacked by Windows like owned dialogs: modal dialogs must stay `-topmost`, and must never `wait_visibility()`;
   otherwise a dialog can hide behind another window while holding the grab = "app froze". See `_Dialog.show`.
 - Tk `Canvas.lift/tkraise` raise canvas *items*; use `tk.Misc.tkraise(widget)`.

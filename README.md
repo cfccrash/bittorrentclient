@@ -462,3 +462,8 @@ downloaded yet waits for it instead of failing.
 
 ### 1.9.41
 - Player: the buttons (mini player, full screen, play ...) now respond to every click. A click was ignored whenever the controls redrew themselves between pressing and releasing the mouse button, which happens several times a second while a video plays.
+
+### 1.9.42
+- Player keys work again: in the Player tab they now act whenever that tab is showing (not only when the keyboard happened to be inside it), and not while you type in a text box or in another window's dialog.
+- Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
+- Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
