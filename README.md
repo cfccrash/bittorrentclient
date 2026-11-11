@@ -226,7 +226,7 @@ build environment; the formats follow the BEP / MSE specifications. If a particu
 try Settings -> Encryption "Prefer" and Transport "TCP first".
 
 Not supported: BEP 42 DHT node-id hardening, per-torrent speed limits, scheduling.
-IPv6: when your computer has it, the client also listens and connects over IPv6 (TCP and uTP on the same port number), takes IPv6 peers from trackers (`peers6`, UDP trackers over IPv6), peer exchange (`added6`) and a second DHT over IPv6 (BEP 32). Turn it off in Settings -> Connection -> Router ("Use IPv6 when available"); Diagnostics shows the IPv6 state.
+IPv6: when your computer has it, the client also listens and connects over IPv6 (TCP and uTP on the same port number), takes IPv6 peers from trackers (`peers6`, UDP trackers over IPv6), peer exchange (`added6`) and a second DHT over IPv6 (BEP 32). Routers firewall incoming IPv6: with automatic port forwarding on, the app opens a pinhole (PCP over IPv6, or UPnP IGD 2 WANIPv6FirewallControl) and checks whether peers actually reach it. Turn IPv6 off in Settings -> Connection -> Router ("Use IPv6 when available"); Diagnostics shows the IPv6 state.
 
 Only download content you have the right to share.
 
@@ -490,6 +490,13 @@ downloaded yet waits for it instead of failing.
 - Player keys work again: in the Player tab they now act whenever that tab is showing (not only when the keyboard happened to be inside it), and not while you type in a text box or in another window's dialog.
 - Clicking the video pauses / plays (and double-click goes full screen) in the tab and in the player's own window - the video engine never saw those clicks.
 - Full screen from the Player tab now really goes full screen; leaving it (Esc, F, or the button) brings the video back into the tab.
+
+### 1.9.47 - IPv6 firewall, player without a title bar, old update installers removed
+- **The detached player and the mini player have no title bar any more**: just the picture. Drag the picture to move the window (a plain click still plays / pauses, a double-click goes full screen), drag its edges to resize it, and close it with the new ✕ at the right end of the controls (or Alt+F4). In the narrow mini player the time display shortens instead of running into the buttons.
+- **The player window snaps like any Windows window**: drag the picture to the left or right edge for half the screen, into a corner for a quarter, or to the top to maximise (Snap Assist then offers windows for the rest; Win+arrow keys work too). The mini player keeps its size instead: let it go near an edge or corner and it settles neatly against it, and it goes back to the size and place it came from (maximised too).
+- **IPv6: the router's firewall is opened for you when it allows it.** IPv6 has no port forwarding, but most routers' firewalls block incoming IPv6 connections, so IPv6 peers could not connect to you. With *Automatic port forwarding* on, the app now asks the router to let its port in: PCP over IPv6 first, then UPnP's IPv6 firewall control (IGD 2). The pinholes are renewed while the app runs and removed when it exits.
+- **Can IPv6 peers reach you?** The app now notices connections from the Internet that it did not ask for, and *Settings -> Connection* and *Diagnostics* say whether peers can reach you over IPv6. When nothing gets through and the router cannot be asked, Diagnostics explains the router setting to change.
+- Downloaded update installers were never deleted, so they piled up in the data folder (about 50 MB each). The app now deletes installers of the version you have and older ones each time it starts, and a newer download replaces any older one that was still waiting to be installed.
 
 ### 1.9.46 - Updates install again
 - **Fixed:** an automatic update could stop at "Preparing to Install" and close without updating. When trackers did not answer, the app took too long to exit after saying goodbye to them (1.9.44 made this worse by also trying IPv6). The installer then had to force it closed, and that also closed the installer. The app now exits within a few seconds whatever the trackers do, and the installer waits longer and no longer closes itself.

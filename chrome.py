@@ -56,6 +56,7 @@ class Chrome:
         self.maxed = False
         self.normal_geo = None
         self.full = False
+        self.strip = True              # the title strip is shown (a video window can do without: show_strip)
         self.on_full = None            # optional fn(on): told when fill_screen switches
         self.hover = None
         self.title_text = title
@@ -93,6 +94,20 @@ class Chrome:
         self._press_info = None
         win.after(30, self._after_map)
         self.draw()
+
+    def show_strip(self, on):
+        """Show or hide the title strip (the resize edges stay). The owner then moves the window itself."""
+        on = bool(on)
+        if on == self.strip:
+            return
+        self.strip = on
+        if self.full:
+            return                     # full screen has no strip anyway; leaving it applies this
+        if on:
+            kids = [k for k in self.win.pack_slaves() if k is not self.bar]
+            self.bar.pack(side="top", fill="x", **({"before": kids[0]} if kids else {}))
+        else:
+            self.bar.pack_forget()
 
     def set_resizable(self, on):
         on = bool(on)
@@ -300,6 +315,15 @@ class Chrome:
         """Whole-screen mode for a video window: no strip, no grips."""
         if on == self.full:
             return
+        if self.native is not None and self.native.fill_screen(on):     # (a snapped / maximised window too)
+            self.full = on
+            if on:
+                self.bar.pack_forget()
+            elif self.strip:
+                kids = [k for k in self.win.pack_slaves() if k is not self.bar]
+                self.bar.pack(side="top", fill="x", **({"before": kids[0]} if kids else {}))
+            self._grips_visible(not on and not self.maxed)
+            return
         if on:
             self.normal_geo = self.win.geometry()
             self.full = True
@@ -308,8 +332,9 @@ class Chrome:
             self.win.geometry("%dx%d+0+0" % (self.win.winfo_screenwidth(), self.win.winfo_screenheight()))
         else:
             self.full = False
-            kids = [k for k in self.win.pack_slaves() if k is not self.bar]
-            self.bar.pack(side="top", fill="x", **({"before": kids[0]} if kids else {}))
+            if self.strip:
+                kids = [k for k in self.win.pack_slaves() if k is not self.bar]
+                self.bar.pack(side="top", fill="x", **({"before": kids[0]} if kids else {}))
             if self.normal_geo:
                 self.win.geometry(self.normal_geo)
             self._grips_visible(not self.maxed)
@@ -562,6 +587,16 @@ class NativeFrame:
         """Windows moves the window from here on (snapping to edges and corners, Snap Assist, no redraw trail)."""
         self._nc_down(self.HTCAPTION, x, y)
 
+    def get_rect(self):
+        """The window's (x, y, width, height) on screen, as Windows has it."""
+        r = self.wt.RECT()
+        self.u.GetWindowRect(self.hwnd, self.ct.byref(r))
+        return r.left, r.top, r.right - r.left, r.bottom - r.top
+
+    def set_rect(self, x, y, w, h):
+        """Place the window exactly (Tk's geometry() would add the frame it thinks there is: the window grows)."""
+        self.u.SetWindowPos(self.hwnd, None, int(x), int(y), int(w), int(h), 0x0004 | 0x0010)   # NOZORDER|NOACTIVATE
+
     def begin_resize(self, edge, x, y):
         ht = {"w": 10, "e": 11, "n": 12, "nw": 13, "ne": 14, "s": 15, "sw": 16, "se": 17}[edge]
         self._nc_down(ht, x, y)
@@ -590,7 +625,7 @@ class NativeFrame:
         pt = wt.POINT(x, y); u.ScreenToClient(self.hwnd, ct.byref(pt))
         cr = wt.RECT(); u.GetClientRect(self.hwnd, ct.byref(cr))
         c = self.c
-        if c.full or "max" not in c.buttons or not 0 <= pt.y < c.h:
+        if c.full or not c.strip or "max" not in c.buttons or not 0 <= pt.y < c.h:
             return False
         i = list(reversed(c.buttons)).index("max")
         return cr.right - (i + 1) * c.bw <= pt.x < cr.right - i * c.bw
@@ -663,7 +698,7 @@ class NativeFrame:
         pt = wt.POINT(x, y); u.ScreenToClient(hwnd, ct.byref(pt))
         cr = wt.RECT(); u.GetClientRect(hwnd, ct.byref(cr))
         c = self.c
-        if c.full or pt.y < 0 or pt.y >= c.h:
+        if c.full or not c.strip or pt.y < 0 or pt.y >= c.h:
             return self.HTCLIENT
         right = cr.right                                              # caption buttons from the right: ... min, max, close
         for i, name in enumerate(reversed(c.buttons)):

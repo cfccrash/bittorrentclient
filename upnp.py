@@ -16,6 +16,7 @@ SSDP = ("239.255.255.250", 1900)
 TARGETS = ("urn:schemas-upnp-org:device:InternetGatewayDevice:2",
            "urn:schemas-upnp-org:device:InternetGatewayDevice:1")
 WAN_SERVICES = ("WANIPConnection", "WANPPPConnection")
+V6FC = "WANIPv6FirewallControl"      # IGD 2: opening IPv6 pinholes in the router's firewall
 # Some routers only answer certain search targets, so ask for all of these.
 SEARCH_TARGETS = TARGETS + ("urn:schemas-upnp-org:service:WANIPConnection:1",
                             "urn:schemas-upnp-org:service:WANPPPConnection:1", "upnp:rootdevice")
@@ -145,8 +146,9 @@ def _fault(data):
 
 
 class Gateway:
-    def __init__(self, control_url, service, host):
+    def __init__(self, control_url, service, host, v6fc=None):
         self.control_url, self.service, self.host = control_url, service, host
+        self.v6fc = v6fc          # (control URL, service type) of WANIPv6FirewallControl, if the router has it
         self.local_ip = _local_ip(host)
 
     def call(self, action, args=(), url=None, service=None):
@@ -154,7 +156,7 @@ class Gateway:
         params = "".join("<%s>%s</%s>" % (k, escape(str(v)), k) for k, v in args)
         body = ('<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
                 's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>'
-                '<u:%s xmlns:u="%s">%s</u:%s></s:Body></s:Envelope>' % (action, self.service, params, action))
+                '<u:%s xmlns:u="%s">%s</u:%s></s:Body></s:Envelope>' % (action, service, params, action))
         req = urllib.request.Request(url or self.control_url, data=body.encode(), headers={
             "Content-Type": 'text/xml; charset="utf-8"',
             "SOAPAction": '"%s#%s"' % (service, action)})
@@ -182,6 +184,30 @@ class Gateway:
     def external_ip(self):
         return self.call("GetExternalIPAddress").get("NewExternalIPAddress", "").strip()
 
+    # -- IPv6 firewall pinholes (WANIPv6FirewallControl:1) --------------------
+    def _v6(self, action, args=()):
+        if not self.v6fc:
+            raise UPnPError(0, "the router has no IPv6 firewall control service")
+        return self.call(action, args, url=self.v6fc[0], service=self.v6fc[1])
+
+    def firewall_status(self):
+        """(firewall enabled, pinholes allowed) as the router reports them."""
+        r = self._v6("GetFirewallStatus")
+        return r.get("FirewallEnabled", "1").strip() not in ("0", "false"),             r.get("InboundPinholeAllowed", "1").strip() not in ("0", "false")
+
+    def add_pinhole(self, proto, ip, port, lease):
+        """Allow incoming `proto` traffic from anywhere to [ip]:port for `lease` seconds; returns the pinhole id."""
+        r = self._v6("AddPinhole", [
+            ("RemoteHost", ""), ("RemotePort", 0), ("InternalClient", ip), ("InternalPort", port),
+            ("Protocol", 6 if proto == "TCP" else 17), ("LeaseTime", lease)])
+        return r.get("UniqueID", "").strip()
+
+    def update_pinhole(self, uid, lease):
+        self._v6("UpdatePinhole", [("UniqueID", uid), ("NewLeaseTime", lease)])
+
+    def delete_pinhole(self, uid):
+        self._v6("DeletePinhole", [("UniqueID", uid)])
+
 
 def _fetch_xml(url, timeout=4):
     with urllib.request.urlopen(url, timeout=timeout) as r:
@@ -206,7 +232,7 @@ def _describe(location, log=None, timeout=4):
                 base = ub
             else:  # routers sometimes advertise a wrong / internal address: trust where we actually got it from
                 log("description %s: ignoring URLBase %s (different host)" % (location, ub))
-    wan = None
+    wan = v6fc = None
     seen = []
     for svc in root.iter():
         if _local(svc.tag) != "service":
@@ -222,11 +248,15 @@ def _describe(location, log=None, timeout=4):
             continue
         if any(w in stype for w in WAN_SERVICES) and wan is None:
             wan = (url, stype)
+        if V6FC in stype and v6fc is None:
+            v6fc = (url, stype)
     if wan is None:
         log("description %s: no WANIPConnection / WANPPPConnection service (has: %s)" % (location, ", ".join(seen) or "none"))
         return None
     log("description %s: %s at %s" % (location, wan[1].rsplit(":", 2)[-2], wan[0]))
-    return Gateway(wan[0], wan[1], host)
+    if v6fc:
+        log("description %s: %s at %s" % (location, V6FC, v6fc[0]))
+    return Gateway(wan[0], wan[1], host, v6fc)
 
 
 def discover(timeout=4.0, ssdp_addr=SSDP, log=None, gateways=(), interfaces=None, unicast_port=1900):

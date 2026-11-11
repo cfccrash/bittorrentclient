@@ -37,7 +37,8 @@ UP_NEXT_S = 15                 # the "Up next" card shows this many seconds befo
 ICON_FONTS = ("Segoe Fluent Icons", "Segoe MDL2 Assets")
 ICON = dict(play="\uE768", pause="\uE769", stop="\uE71A", prev="\uE892", next="\uE893", back="\uED3C",
             fwd="\uED3D", vol="\uE767", mute="\uE74F", full="\uE740", unfull="\uE73F", subs="\uED1E",
-            chapters="\uE8FD", aspect="\uE799", camera="\uE722", mini="\uEE49", detach="\uE8A7", attach="\uEE47")
+            chapters="\uE8FD", aspect="\uE799", camera="\uE722", mini="\uEE49", detach="\uE8A7", attach="\uEE47",
+            close="\uE711")
 PREFS_FILE = "track_prefs.json"
 GLYPH_NAME = {v: k for k, v in ICON.items()}
 
@@ -108,6 +109,9 @@ def draw_glyph(cv, name, cx, cy, size, col, bold=False):
     elif name == "mini":
         cv.create_rectangle(cx - h * .85, cy - h * .65, cx + h * .85, cy + h * .65, outline=col, width=w)
         cv.create_rectangle(cx + h * .05, cy + h * .05, cx + h * .6, cy + h * .4, outline=col, fill=col, width=1)
+    elif name == "close":
+        L(cx - h * .6, cy - h * .6, cx + h * .6, cy + h * .6)
+        L(cx - h * .6, cy + h * .6, cx + h * .6, cy - h * .6)
     elif name in ("detach", "attach"):
         cv.create_rectangle(cx - h * .8, cy - h * .5, cx + h * .4, cy + h * .8, outline=col, width=w)
         if name == "detach":
@@ -317,8 +321,9 @@ class PlayerPanel:
 
     def __init__(self, parent, top, queue=(), index=0, session=None, lib=None, options=None, on_fullscreen=None,
                  on_popout=None, on_end=None, key_widget=None, popout_label="Detach", on_mini=None, key_scope=None,
-                 mini_tip="Mini player (stays on top in a corner)", is_full=None):
+                 mini_tip="Mini player (stays on top in a corner)", is_full=None, on_close=None):
         self.popout_label = popout_label
+        self.on_close = on_close           # a window of its own has no title bar: the close button is on the strip
         self.on_mini, self.mini_tip, self.is_full = on_mini, mini_tip, is_full
         self.key_scope = key_scope         # fn() -> bool: may the shortcuts act now (the Player tab is showing)?
         self.next_cancelled = False
@@ -508,8 +513,9 @@ class PlayerPanel:
                 ("next", ICON["next"], lambda: self.step(1), "Next in the queue  (N)", False),
                 ("back", ICON["back"], lambda: self.rel(-10), "Back 10 s  (J)", False),
                 ("fwd", ICON["fwd"], lambda: self.rel(30), "Forward 30 s", False)]
-        right = [("full", ICON["unfull"] if self._is_full() else ICON["full"], lambda: self.fullscreen(),
-                  "Full screen  (F, double-click)", False)]
+        right = [("close", ICON["close"], self.on_close, "Close the player  (Alt+F4)", False)] if self.on_close else []
+        right.append(("full", ICON["unfull"] if self._is_full() else ICON["full"], lambda: self.fullscreen(),
+                      "Full screen  (F, double-click)", False))
         if self.on_popout:
             right.append(("pop", ICON["attach"] if self.popout_label == "Attach" else ICON["detach"], self.on_popout,
                           "Back into the Player tab" if self.popout_label == "Attach" else "Play in a window of its own", False))
@@ -523,7 +529,7 @@ class PlayerPanel:
                   ("shot", ICON["camera"], self.screenshot, "Save a picture of this frame  (Shift+S)", False)]
         if w < px(620):                                         # mini player: just the essentials
             left = [x for x in left if x[0] in ("play", "back", "fwd")]
-            right = [x for x in right if x[0] in ("full", "pop", "mini", "tracks")]
+            right = [x for x in right if x[0] in ("full", "pop", "mini", "tracks", "close")]
         return left, right
 
     def _redraw(self, pos=None):
@@ -587,7 +593,19 @@ class PlayerPanel:
         muted = bool(self.mpv and self.mpv.get_flag("mute"))
         self._icon("mute", ICON["mute"] if muted or v == 0 else ICON["vol"], self.toggle_mute, "Mute  (M)", x + px(4), cy, px(36), False)
         x += px(40)
-        vx0, vx1 = x, x + px(80)
+        # room left between here and the right-hand buttons: a narrow strip (the mini player) shortens the volume
+        # bar, then shows only the position, then no time at all, rather than drawing over the buttons
+        rw = sum(max(px(40), int(self.f_ui.measure(self._speed_label)) + px(16)) if k == "speed" else px(40)
+                 for k, *_ in right)
+        room = (w - px(10) - rw) - x
+        tt = self.time.get()
+        for cand in (tt, tt.split(" / ")[0], ""):
+            need = (int(self.f_ui.measure(cand)) + px(32)) if cand else px(8)
+            if room - need >= px(40) or not cand:
+                break
+        tt = cand
+        vx0 = x
+        vx1 = x + max(px(30), min(px(80), room - need))
         self._vol_box = (vx0, cy - px(10), vx1, cy + px(10))
         cv.create_rectangle(vx0, cy - px(2), vx1, cy + px(2), fill=TRACK, width=0)
         vf = vx0 + (vx1 - vx0) * min(1.0, v / 130.0)
@@ -595,9 +613,9 @@ class PlayerPanel:
         cv.create_oval(vf - px(5), cy - px(5), vf + px(5), cy + px(5), fill=FG, width=0)
         self._items.append(dict(key="volbar", box=self._vol_box, tip="Volume  (Up / Down, mouse wheel)", cmd=None))
         x = vx1 + px(16)
-        tt = self.time.get()
-        cv.create_text(x, cy, text=tt, anchor="w", fill=FG, font=self.f_ui)
-        x += int(self.f_ui.measure(tt)) + px(16)
+        if tt:
+            cv.create_text(x, cy, text=tt, anchor="w", fill=FG, font=self.f_ui)
+            x += int(self.f_ui.measure(tt)) + px(16)
         xr = w - px(10)
         for key, glyph, cmd, tip, big in right:
             if key == "speed":
@@ -1437,8 +1455,12 @@ class PlayerWindow:
         if chrome.enabled(options):
             try:
                 scale = self.win.winfo_fpixels("1i") / 96.0
+                # snap=True: a real Windows frame, so dragging it to an edge or corner snaps it like any window
+                # (Snap Assist, Win+arrow keys, edge resizing by Windows itself)
                 self.chrome = chrome.attach(self.win, ui.DARK, lambda v: int(round(v * scale)), title or "Player",
-                                            resizable=True, buttons=("close",))
+                                            resizable=True, buttons=("close",), snap=True)
+                if self.chrome:
+                    self.chrome.show_strip(False)       # just the picture: drag it to move, close on the controls
                 self.win.geometry("%dx%d" % (int(960 * scale), int(600 * scale)))
             except Exception:
                 self.chrome = None
@@ -1450,8 +1472,14 @@ class PlayerWindow:
         self._normal_geo = None
         self.panel = PlayerPanel(self.win, self.win, q, index, session, lib, options, on_fullscreen=self.fullscreen,
                                  on_popout=(lambda: on_dock(self)) if on_dock else None, popout_label="Attach",
-                                 on_mini=lambda: self.set_mini(not self.mini), is_full=lambda: self.full)
+                                 on_mini=lambda: self.set_mini(not self.mini), is_full=lambda: self.full,
+                                 on_close=self.close if self.chrome else None)
         self.mpv = self.panel.mpv
+        if self.chrome:                   # no title bar to hold: dragging the picture moves the window
+            v = self.panel.video
+            v.bind("<Button-1>", self._v_press)
+            v.bind("<B1-Motion>", self._v_drag)
+            v.bind("<ButtonRelease-1>", self._v_release)
         self.win.protocol("WM_DELETE_WINDOW", self.close)
         if self.panel.error:
             self.panel.after(100, lambda: self._no_lib(target, self.panel.error))
@@ -1503,6 +1531,66 @@ class PlayerWindow:
             self._back_to_tab = False
             self.panel.after(50, lambda: self._on_dock(self))
 
+    # -- the picture as the window's handle: a click plays / pauses, a drag moves the window
+    def _nat(self):
+        n = self.chrome.native if self.chrome else None
+        return n if n is not None and n.hwnd else None
+
+    def _v_press(self, e):
+        nat = self._nat()
+        wx, wy = nat.get_rect()[:2] if nat else (self.win.winfo_x(), self.win.winfo_y())
+        self._vdrag = (e.x_root, e.y_root, wx, wy, False)
+        self.panel._wake()
+
+    def _v_drag(self, e):
+        d = getattr(self, "_vdrag", None)
+        if not d or self.full:
+            return
+        sx, sy, wx, wy, moving = d
+        dx, dy = e.x_root - sx, e.y_root - sy
+        nat = self._nat()
+        if not moving:
+            if max(abs(dx), abs(dy)) < max(4, int(4 * self.panel.scale)):
+                return
+            self._vdrag = (sx, sy, wx, wy, True)
+            if nat and not self.mini:               # Windows moves it from here: snap to halves, quarters, maximise
+                nat.begin_move(sx, sy)
+                return
+        elif nat and not self.mini:
+            return                                  # (Windows' move loop has it)
+        self._move_to(wx + dx, wy + dy)
+
+    def _move_to(self, x, y):
+        nat = self._nat()
+        if nat:
+            _x, _y, w, h = nat.get_rect()
+            nat.set_rect(x, y, w, h)
+        else:
+            self.win.geometry("+%d+%d" % (x, y))
+
+    def _settle_mini(self):
+        """A mini player let go near a screen edge goes against it (16 px in), so corners are easy to hit."""
+        nat = self._nat()
+        x, y, w, h = nat.get_rect() if nat else (self.win.winfo_x(), self.win.winfo_y(),
+                                                  self.win.winfo_width(), self.win.winfo_height())
+        ax, ay, aw, ah = ui.work_area(self.win)
+        s = self.panel.scale
+        gap, near = int(16 * s), int(72 * s)
+        nx = ax + gap if x - ax < near else (ax + aw - w - gap if (ax + aw) - (x + w) < near else x)
+        ny = ay + gap if y - ay < near else (ay + ah - h - gap if (ay + ah) - (y + h) < near else y)
+        nx = min(max(nx, ax - w + int(80 * s)), ax + aw - int(80 * s))      # never lost off the screen
+        ny = min(max(ny, ay), ay + ah - int(60 * s))
+        if (nx, ny) != (x, y):
+            self._move_to(nx, ny)
+
+    def _v_release(self, e):
+        d, self._vdrag = getattr(self, "_vdrag", None), None
+        if d and not d[4]:                # no drag: an ordinary click
+            self.panel.toggle()
+            self.panel._wake()
+        elif d and self.mini:
+            self._settle_mini()
+
     def _take_focus(self):
         try:
             self.win.lift()
@@ -1520,18 +1608,34 @@ class PlayerWindow:
         self.mini = on
         try:
             if on:
+                nat = self._nat()
+                self._normal_max = bool(self.chrome and self.chrome.maxed)
+                if self._normal_max:                # maximised: the mini player comes from (and goes back to) that
+                    self.chrome.restore()
+                    self.win.update_idletasks()
+                # a snapped window's own size (Windows restores the pre-snap size only on a drag)
+                self._normal_rect = nat.get_rect() if nat else None
                 self._normal_geo = self.win.geometry()
                 x, y, w, h = ui.work_area(self.win)
                 s = self.panel.scale
                 mw, mh = int(480 * s), int(300 * s)
-                self.win.geometry("%dx%d+%d+%d" % (mw, mh, x + w - mw - int(16 * s), y + h - mh - int(16 * s)))
+                mx, my = x + w - mw - int(16 * s), y + h - mh - int(16 * s)
+                if nat:
+                    nat.set_rect(mx, my, mw, mh)
+                else:
+                    self.win.geometry("%dx%d+%d+%d" % (mw, mh, mx, my))
                 self.win.update_idletasks()        # (making it topmost before the move is applied undoes the move)
                 self.win.attributes("-topmost", True)
                 self.panel.mini_tip = "Back to full size"
             else:
                 self.win.attributes("-topmost", False)
                 self.win.update_idletasks()
-                if self._normal_geo:
+                nat = self._nat()
+                if nat and getattr(self, "_normal_rect", None):
+                    nat.set_rect(*self._normal_rect)
+                    if getattr(self, "_normal_max", False):
+                        self.chrome.maximize()
+                elif self._normal_geo:
                     self.win.geometry(self._normal_geo)
                 self.panel.mini_tip = "Mini player (stays on top in a corner)"
         except tk.TclError:

@@ -79,6 +79,34 @@ def download(rel, folder, progress=None, opener=None):
     return path
 
 
+def clean(folder, current, keep=None):
+    """Delete installers that are no longer needed: this version's and older ones (already installed) and, when
+    `keep` is given, any other pending one (a newer download replaced it). Unfinished downloads (.part) of those
+    go too. A file still in use (the installer that is finishing right now) is left for the next start.
+    Returns the bytes freed."""
+    freed = 0
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    keep = os.path.normcase(os.path.abspath(keep)) if keep else None
+    for n in names:
+        m = re.match(r"^BitTorrentClient-Setup-([\w.\-]+?)\.exe(\.part)?$", n, re.I)
+        if not m:
+            continue
+        p = os.path.join(folder, n)
+        if keep and os.path.normcase(os.path.abspath(p)) == keep:
+            continue
+        if ver(m.group(1)) <= ver(current) or keep:
+            try:
+                size = os.path.getsize(p)
+                os.remove(p)
+                freed += size
+            except OSError:
+                pass
+    return freed
+
+
 def verify(path, rel):
     if rel["size"] and os.path.getsize(path) != rel["size"]:
         return False

@@ -1,6 +1,7 @@
 """Automatic router port forwarding, standard library only.
 
 IPv4 (NAT):  PCP (RFC 6887)  ->  NAT-PMP (RFC 6886)  ->  UPnP IGD, first one the router speaks.
+IPv6 (no NAT, but a firewall):  PCP MAP over IPv6  ->  UPnP IGD 2 WANIPv6FirewallControl pinholes (Pinholer).
 
 The router may hand out a different external port than the one asked for (it is busy, or the router
 insists); that port is accepted and exposed in PortMapper.ext so the rest of the client can advertise
@@ -72,6 +73,77 @@ def _parse_win_route(text):
     return out
 
 
+def _parse_win_route6(text):
+    """`route print -6 ::/0`: 'If Metric Network Gateway' rows -> (metric, gateway, interface index)."""
+    out = []
+    for line in text.splitlines():
+        p = line.split()
+        if len(p) >= 4 and p[2] == "::/0" and p[0].isdigit() and p[1].isdigit() and ":" in p[3]:
+            out.append((int(p[1]), p[3], int(p[0])))
+    return out
+
+
+def _parse_proc_route6(text, ifindex=None):
+    """/proc/net/ipv6_route: the default route's next hop -> (metric, gateway, interface index)."""
+    out = []
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) >= 10 and f[0] == "0" * 32 and f[1] == "00" and f[4] != "0" * 32:
+            try:
+                idx = (ifindex or socket.if_nametoindex)(f[9])
+            except OSError:
+                continue
+            out.append((int(f[5], 16), socket.inet_ntop(socket.AF_INET6, bytes.fromhex(f[4])), idx))
+    return out
+
+
+def _parse_bsd_route6(text, ifindex=None):
+    gw = idx = None
+    for line in text.splitlines():
+        k, _, v = line.strip().partition(":")
+        if k == "gateway":
+            gw = v.strip().split("%")[0]
+        elif k == "interface":
+            try:
+                idx = (ifindex or socket.if_nametoindex)(v.strip())
+            except OSError:
+                pass
+    return [(0, gw, idx or 0)] if gw and ":" in gw else []
+
+
+def default_gateways6():
+    """IPv6 default routers as (address, interface index), best first. Usually a link-local fe80:: address,
+    which needs the interface index to be reachable."""
+    found = []
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/net/ipv6_route") as f:
+                found = _parse_proc_route6(f.read())
+        elif sys.platform == "win32":
+            found = _parse_win_route6(_run(["route", "print", "-6", "::/0"]))
+        else:
+            found = _parse_bsd_route6(_run(["route", "-n", "get", "-inet6", "default"]))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    out = []
+    for _, gw, idx in sorted(found):
+        if (gw, idx) not in out:
+            out.append((gw, idx))
+    return out
+
+
+def global_ipv6():
+    """This computer's global IPv6 address as the system would use it to reach the Internet, or None. Connecting a
+    UDP socket sends nothing; it only asks the system to pick a route and source address."""
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.connect(("2001:4860:4860::8888", 53))
+            a = s.getsockname()[0].split("%")[0]
+        return a if ipaddress.IPv6Address(a).is_global else None
+    except (OSError, ValueError):
+        return None
+
+
 def _parse_bsd_route(text):
     return [(0, line.split(":", 1)[1].strip()) for line in text.splitlines()
             if line.strip().startswith("gateway:")]
@@ -115,12 +187,13 @@ def guess_gateways():
 
 
 def _udp_exchange(addr, packet, timeouts=(0.25, 0.5, 1.0), bind=None):
-    """Send `packet` to addr (an IPv4 (host, port) pair), retransmitting with back-off; return the
-    first reply that comes from that address (or None). `bind` pins the source address."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    """Send `packet` to addr (IPv4 (host, port) or IPv6 (host, port, 0, interface index)), retransmitting with
+    back-off; return the first reply that comes from that address (or None). `bind` pins the source address."""
+    v6 = ":" in addr[0]
+    sock = socket.socket(socket.AF_INET6 if v6 else socket.AF_INET, socket.SOCK_DGRAM)
     try:
         if bind:
-            sock.bind((bind, 0))
+            sock.bind((bind, 0, 0, 0) if v6 else (bind, 0))
         want = addr[0].split("%")[0]
         for t in timeouts:
             try:
@@ -296,6 +369,159 @@ class PCP:
         return self.ext_ip
 
 
+class PCP6(PCP):
+    """PCP over IPv6 (RFC 6887): there is no address translation, the MAP request opens the router's firewall
+    for our address and port. Sent to the default router from our global address (the client address field
+    must match the source, or the router answers ADDRESS_MISMATCH)."""
+
+    def __init__(self, gateway, scope, local_ip, port=5351):
+        super().__init__(gateway, port, local_ip=local_ip)
+        self.addr = (gateway, port, 0, scope)
+
+    def _x(self, packet, timeouts=MAP_TIMEOUTS):
+        return _udp_exchange(self.addr, packet, timeouts, bind=self.local_ip)
+
+    def _client(self):
+        return socket.inet_pton(socket.AF_INET6, self.local_ip)
+
+
+class Pinholer:
+    """IPv6 has no NAT, but most home routers' firewalls drop connections nobody asked for, so peers cannot
+    reach us. Ask the router to let our ports in: PCP over IPv6 first, then UPnP IGD 2 (AddPinhole). `step()`
+    does one round and returns the seconds until the next (renewal at half the lease); `remove_all()` closes
+    them again. Driven by PortMapper's thread."""
+    LEASE = 7200
+
+    def __init__(self, ports, log, upnp_finder, local_ip=None, gateways6=None, pmp_port=5351, retry=600):
+        self.ports, self._log, self.upnp_finder = list(ports), log, upnp_finder
+        self.local_ip = local_ip or global_ipv6
+        self.gateways6, self.pmp_port, self.retry = gateways6, pmp_port, retry
+        self.status = "looking for a way to open the router's IPv6 firewall"
+        self.backend = None      # PCP6, a upnp Gateway, or "open" / "refused" (what the router's UPnP said)
+        self.ip = None
+        self.holes = {}          # (proto, port) -> UPnP pinhole id (PCP: True)
+
+    def _gateways(self):
+        if self.gateways6 is not None:
+            return self.gateways6
+        gws = default_gateways6()
+        self._log("IPv6: default router(s) from the OS: %s" % (", ".join("%s%%%s" % g for g in gws) or "none"))
+        return gws
+
+    def _detect(self, ip):
+        for gw, scope in self._gateways():
+            b = PCP6(gw, scope, ip, self.pmp_port)
+            try:
+                ok = b.probe()
+            except OSError as e:
+                self._log("IPv6: PCP probe %s failed: %s" % (gw, e))
+                continue
+            self._log("IPv6: PCP probe %s: %s" % (gw, "router answered" if ok else "no answer"))
+            if ok:
+                return b
+        try:
+            gw = self.upnp_finder()
+        except Exception as e:
+            self._log("IPv6: UPnP search failed: %s" % e)
+            gw = None
+        if gw is None:
+            self._log("IPv6: no UPnP router")
+            return None
+        if not gw.v6fc:
+            self._log("IPv6: the UPnP router has no IPv6 firewall control (that needs UPnP IGD version 2)")
+            return None
+        try:
+            enabled, allowed = gw.firewall_status()
+            self._log("IPv6: UPnP firewall status: firewall %s, pinholes %s" % (
+                "on" if enabled else "off", "allowed" if allowed else "not allowed"))
+        except Exception as e:
+            self._log("IPv6: UPnP GetFirewallStatus failed: %s" % e)
+            enabled, allowed = True, True
+        if not enabled:
+            return "open"
+        if not allowed:
+            return "refused"
+        return gw
+
+    def _open(self, b, ip, proto, port):
+        """Open or renew one pinhole; returns its lifetime in seconds."""
+        if isinstance(b, PCP6):
+            life, _ = b.map(proto, port, port)
+            self.holes[(proto, port)] = True
+            return life
+        uid = self.holes.get((proto, port))
+        if uid:
+            try:
+                b.update_pinhole(uid, self.LEASE)
+                return self.LEASE
+            except Exception:
+                pass                # the router forgot it (reboot): add it again
+        self.holes[(proto, port)] = b.add_pinhole(proto, ip, port, self.LEASE)
+        return self.LEASE
+
+    def step(self):
+        ip = self.local_ip()
+        if ip != self.ip:                     # new / changed address: pinholes are for the old one
+            if self.holes:
+                self._log("IPv6: address changed from %s to %s" % (self.ip, ip))
+            self.remove_all()
+            self.backend, self.ip = None, ip
+        if not ip:
+            self.status = "this network has no public IPv6 address"
+            return self.retry
+        if self.backend is None:
+            self.status = "looking for a way to open the router's IPv6 firewall"
+            self.backend = self._detect(ip)
+        b = self.backend
+        if b is None:
+            self.status = ("the router offers no way for programs to open its IPv6 firewall "
+                           "(no PCP over IPv6, no UPnP IPv6 firewall control)")
+            return self.retry
+        if b == "open":
+            self.status = "the router's IPv6 firewall is off: nothing to open"
+            self.backend = None
+            return 3600
+        if b == "refused":
+            self.status = "the router does not allow programs to open its IPv6 firewall (a router setting)"
+            self.backend = None
+            return self.retry
+        done, errors, lives = [], [], []
+        for proto, port in self.ports:
+            try:
+                lives.append(self._open(b, ip, proto, port))
+                done.append("%s %d" % (proto, port))
+            except Exception as e:
+                errors.append("%s %d: %s" % (proto, port, e))
+                self.holes.pop((proto, port), None)
+        name = "PCP" if isinstance(b, PCP6) else "UPnP"
+        if done:
+            self._log("IPv6: pinholes for [%s] %s via %s" % (ip, ", ".join(done), name))
+        for e in errors:
+            self._log("IPv6: pinhole FAILED - %s" % e)
+        if done and not errors:
+            self.status = "open for %s via %s" % (", ".join(done), name)
+        elif done:
+            self.status = "partly open via %s (%s); failed: %s" % (name, ", ".join(done), "; ".join(errors))
+        else:
+            self.status = "the router refused to open its IPv6 firewall: %s" % "; ".join(errors)
+            self.backend = None
+            return self.retry
+        real = [l for l in lives if l > 0]
+        return max(60, (min(real) // 2) if real else 3600)
+
+    def remove_all(self):
+        b = self.backend
+        for (proto, port), uid in list(self.holes.items()):
+            try:
+                if isinstance(b, PCP6):
+                    b.unmap(proto, port)
+                elif b is not None and not isinstance(b, str):
+                    b.delete_pinhole(uid)
+            except Exception:
+                pass
+        self.holes.clear()
+
+
 # --------------------------------------------------------------------------
 # UPnP adapters
 # --------------------------------------------------------------------------
@@ -435,7 +661,7 @@ class PortMapper:
     def __init__(self, ports, protocols=("pcp", "natpmp", "upnp"), ssdp_addr=upnp_mod.SSDP,
                  gateways=None, pmp_port=5351, retry=300, tick=30, poll_interval=600,
                  announce_addr=("", 5350), announce_multicast=True, announce_listen=True, on_change=None,
-                 ssdp_interfaces=None, ssdp_unicast_port=1900):
+                 ssdp_interfaces=None, ssdp_unicast_port=1900, ports6=None, gateways6=None, local_ip6=None):
         self.ports, self.protocols = list(ports), tuple(protocols)
         self.ssdp_addr, self.gateways, self.pmp_port, self.retry = ssdp_addr, gateways, pmp_port, retry
         self.tick, self.poll_interval, self.on_change = tick, poll_interval, on_change
@@ -454,10 +680,28 @@ class PortMapper:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread = self._listener = None
+        # IPv6: firewall pinholes for `ports6` (no address translation, so no external ports to track)
+        self.pin6 = Pinholer(ports6, self._log, self._upnp_gateway, local_ip6, gateways6, pmp_port,
+                             max(retry, 60)) if ports6 else None
+        self._wake6 = threading.Event()
 
     @property
     def status(self):
         return self.status4
+
+    @property
+    def status6(self):
+        return self.pin6.status if self.pin6 else ""
+
+    def _upnp_gateway(self):
+        """The UPnP router (for its IPv6 firewall service): the one IPv4 already uses, else search."""
+        b = self.backend
+        if isinstance(b, UPnPBackend) and b.gw is not None:
+            return b.gw
+        if "upnp" not in self.protocols:
+            return None
+        return upnp_mod.discover(timeout=3.0, ssdp_addr=self.ssdp_addr, log=self._log, gateways=self._gateways(),
+                                 interfaces=self.ssdp_interfaces, unicast_port=self.ssdp_unicast_port)
 
     def external_port(self, proto, port):
         return self.ext.get((proto, port), port)
@@ -488,6 +732,9 @@ class PortMapper:
         self.backend = None
         self._gws_cache = (0.0, [])
         self._wake.set()
+        if self.pin6:
+            self.pin6.backend = None
+            self._wake6.set()
 
     def diagnostics(self):
         ports = ", ".join("%s %d" % p for p in self.ports)
@@ -495,7 +742,11 @@ class PortMapper:
         lines = ["Status: %s" % self.status4, "Protocol in use: %s" % (self.protocol or "none"),
                  "Local ports: %s" % ports, "External ports from the router: %s" % ext,
                  "Router external address: %s" % (self.external_ip or "unknown"),
-                 "Protocols tried, in order: %s" % ", ".join(p.upper() for p in self.protocols), "", "Log:"]
+                 "Protocols tried, in order: %s" % ", ".join(p.upper() for p in self.protocols)]
+        if self.pin6:
+            lines.append("IPv6 firewall: %s (ports %s)" % (
+                self.pin6.status, ", ".join("%s %d" % p for p in self.pin6.ports)))
+        lines += ["", "Log:"]
         return "\n".join(lines + list(self.log))
 
     def start(self):
@@ -505,16 +756,35 @@ class PortMapper:
             self._listener.start()
         self._thread = threading.Thread(target=self._run, name="portmap", daemon=True)
         self._thread.start()
+        if self.pin6:   # its own thread: a slow IPv6 router search never delays IPv4 (or quitting)
+            self._thread6 = threading.Thread(target=self._run6, name="portmap6", daemon=True)
+            self._thread6.start()
 
     def stop(self, timeout=12):
-        """Stop the worker and remove our mappings / pinholes from the router."""
+        """Stop the workers and remove our mappings / pinholes from the router."""
         self._stop.set()
         self._wake.set()
+        self._wake6.set()
         if self._listener:
             self._listener.stop()
-        if self._thread:
-            self._thread.join(timeout)
-        self.status4, self.status6 = "off", ""
+        end = time.time() + timeout
+        for t in (self._thread, getattr(self, "_thread6", None)):
+            if t:
+                t.join(max(0.1, end - time.time()))
+        self.status4 = "off"
+
+    def _run6(self):
+        """IPv6 pinholes: open, renew at half the lease, look again after a failure; close them on stop."""
+        while not self._stop.is_set():
+            try:
+                wait = self.pin6.step()
+            except Exception as e:
+                self.pin6.backend = None
+                self.pin6.status = "error: %s" % e
+                wait = 60
+            self._wake6.wait(wait)
+            self._wake6.clear()
+        self.pin6.remove_all()
 
     def _on_announce(self, src):
         b = self.backend

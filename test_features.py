@@ -200,6 +200,22 @@ def main():
     assert "/RELAUNCH=1" not in updater.install_command(path, relaunch=False)
     assert any(c.startswith("/LOG=") and c.endswith("install.log") for c in cmd), cmd
     assert updater.can_self_update() is False, "running from source never self-updates"
+    # old installers are removed: this version and older, unfinished downloads of those; a newer one stays
+    import tempfile as _tf, shutil as _sh
+    upd = _tf.mkdtemp()
+    try:
+        for n in ("BitTorrentClient-Setup-1.9.9.exe", "BitTorrentClient-Setup-1.9.45.exe", "BitTorrentClient-Setup-1.9.46.exe",
+                  "BitTorrentClient-Setup-1.9.46.exe.part", "BitTorrentClient-Setup-1.9.47.exe", "install.log", "other.exe"):
+            open(os.path.join(upd, n), "wb").write(b"x" * 10)
+        assert updater.clean(upd, "1.9.46") == 40
+        assert sorted(os.listdir(upd)) == ["BitTorrentClient-Setup-1.9.47.exe", "install.log", "other.exe"], os.listdir(upd)
+        open(os.path.join(upd, "BitTorrentClient-Setup-1.9.48.exe"), "wb").write(b"y")
+        updater.clean(upd, "1.9.46", keep=os.path.join(upd, "BitTorrentClient-Setup-1.9.48.exe"))   # 1.9.48 replaces 1.9.47
+        assert sorted(os.listdir(upd)) == ["BitTorrentClient-Setup-1.9.48.exe", "install.log", "other.exe"], os.listdir(upd)
+        assert updater.clean(os.path.join(upd, "missing"), "1.9.46") == 0
+    finally:
+        _sh.rmtree(upd, ignore_errors=True)
+    print("old update installers cleaned up (this version and older, replaced downloads): OK")
     print("automatic updates: release parsing, verified download, tamper / host checks, installer command: OK")
     print("FEATURE TESTS: ALL PASSED")
 

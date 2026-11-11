@@ -80,12 +80,23 @@ Current version is in `version.py`; release notes are the sections at the bottom
   Embedded mpv gets no mouse input: clicks / double-clicks / wheel on the video are Tk bindings on `panel.video`.
   In the tab, player keys are bind_all + key_scope (tab showing). Panel timers go through `panel.after` (close
   cancels only those - `after info` lists the whole app's timers).
+  PlayerWindow hides the chrome strip (`Chrome.show_strip(False)`, grips stay): `_v_press/_v_drag/_v_release` on
+  panel.video: past the drag threshold a normal window hands over to Windows (`NativeFrame.begin_move`: snap=True
+  frame, so Aero Snap works), a mini player moves itself and `_settle_mini` puts it against near edges; else toggle.
+  Player sizes go through `NativeFrame.get_rect/set_rect` (Tk geometry() adds a frame there is none of: +32 px per
+  mini round trip). `PlayerPanel(on_close=...)` adds the ✕ (rightmost). Hidden strip = no HTCAPTION in `_hit`.
 - Frameless windows (`overrideredirect`) are not stacked by Windows like owned dialogs: modal dialogs must stay `-topmost`, and must never `wait_visibility()`;
   otherwise a dialog can hide behind another window while holding the grab = "app froze". See `_Dialog.show`.
 - IPv6 (`Manager(ipv6=True)`, cfg "ipv6"): separate IPV6_V6ONLY sockets on the same port as IPv4 (TCP listener,
   UDP mux with its own uTP + DHT, `dht_for(ip)` picks the family). On Windows the proactor's UDP `sendto` rejects
   (ip, port) for IPv6 - only (ip, port, 0, 0) works, and the error goes to error_received silently: `_V6Sender` pads it.
   `_good_peer_ip` drops link-local / mapped / multicast. `ipv6_status()` feeds Settings and Diagnostics.
+  Reachability: `_V6Sender.sent` remembers who we sent to; a UDP packet from anyone else, or any incoming TCP
+  from a global address, counts in `Manager.inbound6` (`ipv6_reachable()`: True / False after 15 min busy / None).
+  Pinholes: `portmap.Pinholer` on its own thread (`_run6`): PCP6 (MAP to the fe80:: default router with its
+  interface index, sent FROM our global address) then UPnP `Gateway.v6fc` AddPinhole/UpdatePinhole/DeletePinhole.
+  The dev PC's router (TP-Link Archer BE700, miniupnpd IGD:1) has neither; python.exe has no Windows Firewall
+  inbound rule, so check real reachability in the installed app, not from source.
 - Tk `Canvas.lift/tkraise` raise canvas *items*; use `tk.Misc.tkraise(widget)`.
 - ctypes: declare `restype` for every Win32 call returning a handle/pointer (default is 32-bit int: a 64-bit HMODULE
   gets truncated). faulthandler logs even faults Windows handles, so "access violation" in error.log can mean this.

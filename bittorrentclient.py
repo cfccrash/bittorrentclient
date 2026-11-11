@@ -420,6 +420,7 @@ class App:
         self.root.after(5000, self.check_network)
         self.root.after(30000, self._resume_tick)
         self.root.after(8000, lambda: self.check_updates(manual=False))
+        self.root.after(3000, self._clean_updates)       # deleting a few files is quick: no thread needed
 
     # -- activity log -----------------------------------------------------
     def log(self, text):
@@ -2320,6 +2321,13 @@ class App:
         except Exception:
             pass
 
+    def _clean_updates(self):
+        """Installers of this version and older ones are done with: delete them (they are ~50 MB each)."""
+        import updater
+        freed = updater.clean(os.path.join(self.dir, "updates"), version_mod.VERSION)
+        if freed:
+            self.log("Removed old update installers (%.0f MB)" % (freed / 1e6))
+
     def check_updates(self, manual=False, parent=None):
         """Look for a new version (in the background, about once a day unless `manual`). An installed copy also
         downloads it; _handle_updates then asks before installing. See updater.py."""
@@ -2338,7 +2346,9 @@ class App:
                 if not updater.is_newer(rel, version_mod.VERSION):
                     self.updq.put((manual, parent, "none", rel))
                 elif updater.can_self_update():
-                    self.updq.put((manual, parent, "ready", (rel, updater.download(rel, folder))))
+                    path = updater.download(rel, folder)
+                    updater.clean(folder, version_mod.VERSION, keep=path)     # an older pending download
+                    self.updq.put((manual, parent, "ready", (rel, path)))
                 else:                                                   # running from source / a portable folder
                     self.updq.put((manual, parent, "newer", rel))
             except Exception as e:
@@ -2498,6 +2508,11 @@ class App:
             if "not public" in s4:
                 out.append("The router's external address is private (double NAT, e.g. modem plus router, or CGNAT). "
                            "Forward the port on the upstream device too, or ask the ISP for a public address.")
+        if getattr(self.mgr, "ipv6", False) and self.mgr.ipv6_reachable() is False:
+            out.append("IPv6 peers cannot reach you: the router's IPv6 firewall blocks incoming connections and the app "
+                       "could not open it. In the router's IPv6 or firewall settings, allow incoming connections to this "
+                       "PC on port %s (TCP and UDP), or turn on UPnP IGD 2 / PCP if it has them. Downloads still work: "
+                       "you reach IPv6 peers, they just cannot reach you." % (self.mgr.port or self.cfg["port"]))
         return out
 
     def diagnostics_text(self):

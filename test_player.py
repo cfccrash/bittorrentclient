@@ -70,6 +70,22 @@ def step(n=[0]):
         ev = type("E", (), {"x": (x0 + x1) // 2, "y": (y0 + y1) // 2})()
         pn._cv_press(ev); pn._redraw(); pn._cv_release(ev); out["click"] = pn.mpv.get_flag("pause") != before
         pn._cv_press(ev); pn._redraw(); pn._cv_release(ev)
+        if p.chrome:   # no title strip: the picture moves the window (a drag), a plain click still plays / pauses
+            out["strip"] = p.chrome.strip or bool(p.chrome.bar.winfo_manager())
+            E = lambda x, y: type("E", (), {"x_root": x, "y_root": y})()
+            wx0, paused0 = p.win.winfo_x(), pn.mpv.get_flag("pause")
+            nat, moves = p.chrome.native, []
+            if nat:            # a real Windows frame: the drag hands over to Windows' own move (which snaps)
+                real_move, nat.begin_move = nat.begin_move, lambda x, y: moves.append((x, y))
+            p._v_press(E(500, 500)); p._v_drag(E(540, 520)); p._v_release(E(540, 520)); p.win.update_idletasks()
+            if nat:
+                nat.begin_move = real_move
+            out["dragged"] = ((40 if moves == [(500, 500)] else moves) if nat else p.win.winfo_x() - wx0,
+                              pn.mpv.get_flag("pause") == paused0)
+            out["native"] = bool(nat)
+            p._v_press(E(500, 500)); p._v_release(E(500, 500))
+            out["vclick"] = pn.mpv.get_flag("pause") != paused0
+            p._v_press(E(500, 500)); p._v_release(E(500, 500))
         pn.sub_delay(0.1); pn.sub_scale(0.1)
         pn.audio_delay(0.2); out["adelay"] = round(pn.mpv.get_double("audio-delay"), 1)
         pn.set_night(True); out["night"] = "dynaudnorm" in (pn.mpv.get("af") or ""); pn.set_night(False)
@@ -107,7 +123,9 @@ p.run()
 assert 55 < out["dur"] < 65 and out["resumed"] >= 30 and out["menu"] >= 9, out
 assert out["chapters"] == 2 or not FFMPEG, out
 assert {"play", "stop", "prev", "next", "back", "fwd", "full", "mini", "tracks", "chap", "speed", "shot", "aspect"} <= out["controls"], out
-assert out["mini_controls"] == {"play", "back", "fwd", "full", "mini", "tracks"}, out
+assert out["mini_controls"] == {"play", "back", "fwd", "full", "mini", "tracks"} | ({"close"} if p.chrome else set()), out
+if p.chrome:
+    assert out["strip"] is False and out["dragged"] == (40, True) and out["vclick"], out
 assert out["click"], out
 assert out["speed"] == "2x" and out["adelay"] == 0.2 and out["night"] and out["vol"] == 50 and 25 <= out["pct"] <= 35, out
 assert out["prefs"].get("sub") == {"off": True} and "Picture saved" in out["shot"] and out["shot_file"], out

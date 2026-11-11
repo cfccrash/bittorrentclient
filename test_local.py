@@ -519,7 +519,7 @@ def main():
         class FakePMP:
             """One UDP port speaking both NAT-PMP (version 0) and PCP (version 2). `busy[proto]` lists external
             ports that are already taken; the router then assigns the next free one."""
-            def __init__(self, pcp=True, natpmp=True, refuse=False, busy=None, code=0):
+            def __init__(self, pcp=True, natpmp=True, refuse=False, busy=None, code=0, host="127.0.0.1"):
                 self.pcp, self.natpmp, self.refuse, self.code = pcp, natpmp, refuse, code
                 self.ext = _socket.inet_aton(PUBLIC)
                 self.t0 = time.time()
@@ -528,8 +528,8 @@ def main():
                     self.busy[k] |= set(v)
                 self.log = []        # (protocol name, "TCP"/"UDP", internal port, requested lifetime)
                 self.assigned = {}   # (proto, internal port) -> external port handed out
-                self.sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-                self.sock.bind(("127.0.0.1", 0)); self.port = self.sock.getsockname()[1]
+                self.sock = _socket.socket(_socket.AF_INET6 if ":" in host else _socket.AF_INET, _socket.SOCK_DGRAM)
+                self.sock.bind((host, 0)); self.port = self.sock.getsockname()[1]
                 _th.Thread(target=self._loop, daemon=True).start()
             def epoch(self):
                 return int(time.time() - self.t0)     # router uptime, like a real gateway
@@ -808,7 +808,7 @@ def main():
         pm = FakePMP()
         um = Manager(0, dht=False)
         pm.busy["TCP"].add(um.port)      # the router will not give us our own port number
-        um.portmap_opts = dict(gateways=["127.0.0.1"], pmp_port=pm.port, ssdp_addr=QUIET)
+        um.portmap_opts = dict(gateways=["127.0.0.1"], pmp_port=pm.port, ssdp_addr=QUIET, ports6=[])   # no IPv6 here
         um.set_portmap(True)
         assert wait(lambda: um.portmap and len(um.portmap.mapped) == 2, 20), um.portmap.status
         assert um.public_port == um.port + 1, (um.public_port, um.port)
@@ -962,6 +962,78 @@ t0 = time.time(); m.shutdown(); print("shutdown %%.1f" %% (time.time() - t0), fl
             assert wait(lambda: us6.complete, 60), "download via IPv6 UDP-tracker peer list stalled"
             ul6.shutdown(); trk6.close()
             print("UDP tracker over IPv6 (18-byte peers): download verified: OK")
+
+            # -- IPv6 firewall pinholes: PCP over IPv6, then UPnP IGD 2 (WANIPv6FirewallControl)
+            assert portmap_mod._parse_win_route6(
+                "Active Routes:\n If Metric Network Destination      Gateway\n"
+                "  8    281 ::/0                     fe80::6a7f:f0ff:fe55:4832\n"
+                "  1    331 ::1/128                  On-link\n") == [(281, "fe80::6a7f:f0ff:fe55:4832", 8)]
+            assert portmap_mod._parse_proc_route6(
+                "00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 "
+                "00000400 00000001 00000000 00450003 eth0\n"
+                "fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 "
+                "00000100 00000001 00000000 00000001 eth0\n", ifindex=lambda n: 2) == [(1024, "fe80::1", 2)]
+            assert portmap_mod._parse_bsd_route6("   route to: default\n    gateway: fe80::1%en0\n  interface: en0\n",
+                                                 ifindex=lambda n: 4) == [(0, "fe80::1", 4)]
+            v6opts = dict(ports=[("TCP", 6881)], ports6=[("TCP", 6881), ("UDP", 6882)], tick=0.3)
+            f6 = FakePMP(natpmp=False, host="::1")
+            u = mapper(protocols=("pcp",), pmp_port=f6.port, gateways6=[("::1", 0)], local_ip6=lambda: "::1", **v6opts); u.start()
+            assert wait(lambda: u.status6.startswith("open for"), 20), u.status6
+            assert "via PCP" in u.status6 and f6.adds() == [("TCP", 6881), ("UDP", 6882)], (u.status6, f6.log)
+            assert "IPv6 firewall: open" in u.diagnostics()
+            u.stop()
+            assert f6.deletes() == [("TCP", 6881), ("UDP", 6882)], f6.log
+            f6.close()
+            print("IPv6 pinholes via PCP over IPv6: opened for TCP + UDP, removed on exit: OK")
+
+            igd = FakeIGD()
+            u = mapper(protocols=("upnp",), ssdp_addr=igd.ssdp_addr, gateways6=[], local_ip6=lambda: "2001:db8::7", **v6opts)
+            u.start()
+            assert wait(lambda: u.status6.startswith("open for"), 20), u.status6
+            holes = sorted(igd.pinholes.values())
+            assert "via UPnP" in u.status6 and holes == [("TCP", 6881, "2001:db8::7", 7200), ("UDP", 6882, "2001:db8::7", 7200)], holes
+            u.pin6.step()                                   # renewal: UpdatePinhole, not another AddPinhole
+            assert len(igd.pinholes) == 2 and len(igd.pinhole_updates) == 2, (igd.pinholes, igd.pinhole_updates)
+            u.stop()
+            assert sorted(igd.pinholes_deleted) == sorted(igd.pinholes), igd.pinholes_deleted
+            igd.close()
+            print("IPv6 pinholes via UPnP IGD 2: added, renewed, deleted on exit: OK")
+
+            igd = FakeIGD(fw6=False)                       # IGD 1 (like most TP-Link routers): no IPv6 service
+            u = mapper(protocols=("upnp",), ssdp_addr=igd.ssdp_addr, gateways6=[], local_ip6=lambda: "2001:db8::7", **v6opts)
+            u.start()
+            assert wait(lambda: "no way" in u.status6, 20), u.status6
+            u.stop(); igd.close()
+            igd = FakeIGD(pinhole_error=(606, "Action not authorized"))
+            u = mapper(protocols=("upnp",), ssdp_addr=igd.ssdp_addr, gateways6=[], local_ip6=lambda: "2001:db8::7", **v6opts)
+            u.start()
+            assert wait(lambda: "refused" in u.status6, 20), u.status6
+            u.stop(); igd.close()
+            u = mapper(protocols=("pcp",), pmp_port=QUIET[1], gateways6=[], local_ip6=lambda: None, **v6opts); u.start()
+            assert wait(lambda: "no public IPv6" in u.status6, 20), u.status6
+            u.stop()
+            print("IPv6 pinholes: no IPv6 service / refused / no IPv6 address reported clearly: OK")
+
+            # -- can IPv6 peers reach us? packets from someone we never sent to = yes
+            import torrent_core as TC2
+            got = []
+            mux = TC2.UDPMux(got.append)
+            class _T:
+                def sendto(self, d, a): pass
+                def get_extra_info(self, k, default=None): return None
+            mux.transport = TC2._V6Sender(_T())
+            mux.transport.sendto(b"x", ("2001:db8::1", 5))
+            mux.datagram_received(b"q", ("2001:db8::1", 5, 0, 0))         # a reply: says nothing
+            mux.datagram_received(b"q", ("2001:db8::2", 5, 0, 0))         # unsolicited: reachable
+            assert got == [("2001:db8::2", 5)], got
+            rm = Manager(0, dht=False)
+            try:
+                assert rm.ipv6_reachable() is None and "checking" in rm.ipv6_status()
+                rm._inbound6_udp(("2a00:1450:4001::1", 6881)); rm._inbound6_udp(("fe80::1", 6881))
+                assert rm.inbound6["udp"] == 1 and rm.ipv6_reachable() is True and "peers can reach you" in rm.ipv6_status()
+            finally:
+                rm.shutdown()
+            print("IPv6 reachability: unsolicited packets counted, replies and local addresses ignored: OK")
 
         seeder.shutdown()
         print("ALL TESTS PASSED")

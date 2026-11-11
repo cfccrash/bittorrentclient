@@ -1724,15 +1724,8 @@ def _compact6(b):
 
 
 def ipv6_address():
-    """This computer's global IPv6 address as the system would use it to reach the Internet, or None. Connecting a
-    UDP socket sends nothing; it only asks the system to pick a route and source address."""
-    try:
-        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
-            s.connect(("2001:4860:4860::8888", 53))
-            a = s.getsockname()[0].split("%")[0]
-        return a if ipaddress.IPv6Address(a).is_global else None
-    except (OSError, ValueError):
-        return None
+    """This computer's global IPv6 address (portmap.global_ipv6), or None."""
+    return portmap.global_ipv6()
 
 
 def _in_daemon(loop, fn, *args):
@@ -1758,6 +1751,13 @@ def _in_daemon(loop, fn, *args):
 
     threading.Thread(target=run, daemon=True, name="announce").start()
     return fut
+
+
+def _global_ip(ip):
+    try:
+        return ipaddress.ip_address(ip.split("%")[0]).is_global
+    except ValueError:
+        return False
 
 
 def _is_v6(ip):
@@ -2062,10 +2062,15 @@ class _V6Sender:
 
     def __init__(self, transport):
         self._t = transport
+        self.sent = set()      # (ip, port) we have sent to: their packets are replies a firewall lets through
 
     def sendto(self, data, addr=None):
-        if addr is not None and len(addr) == 2:
-            addr = (addr[0], addr[1], 0, 0)
+        if addr is not None:
+            if len(self.sent) > 100000:
+                self.sent.clear()
+            self.sent.add((addr[0], addr[1]))
+            if len(addr) == 2:
+                addr = (addr[0], addr[1], 0, 0)
         self._t.sendto(data, addr)
 
     def __getattr__(self, name):
@@ -2075,10 +2080,11 @@ class _V6Sender:
 class UDPMux(asyncio.DatagramProtocol):
     """One UDP socket shared by the DHT (bencoded: starts with 'd') and uTP."""
 
-    def __init__(self):
+    def __init__(self, on_unsolicited=None):
         self.transport = None
         self.dht = None
         self.utp = None
+        self.on_unsolicited = on_unsolicited   # IPv6: a packet from someone we never sent to (= reachable)
 
     def connection_made(self, transport):
         sock = transport.get_extra_info("socket")
@@ -2088,6 +2094,8 @@ class UDPMux(asyncio.DatagramProtocol):
         if not data:
             return
         addr = addr[:2]
+        if self.on_unsolicited and isinstance(self.transport, _V6Sender) and addr not in self.transport.sent:
+            self.on_unsolicited(addr)
         try:
             if data[:1] == b"d":
                 if self.dht:
@@ -2158,6 +2166,8 @@ class Manager:
         self.dht = None
         self.ipv6_wanted = ipv6  # also listen / connect over IPv6 when the system has it
         self.ipv6 = False        # ... and it does: an IPv6 listener is up
+        self.inbound6 = {"tcp": 0, "udp": 0}   # connections / packets from the Internet nobody asked for: reachable
+        self.started = time.time()
         self.portmap = None
         self.portmap_opts = {}  # PortMapper overrides (tests)
         self.udp_port = 0
@@ -2517,7 +2527,7 @@ class Manager:
                     continue
             if sock is None:
                 continue
-            mux = UDPMux()
+            mux = UDPMux(self._inbound6_udp if fam == socket.AF_INET6 else None)
             await loop.create_datagram_endpoint(lambda m=mux: m, sock=sock)
             if fam == socket.AF_INET:
                 self.udp_port = sock.getsockname()[1]
@@ -2537,6 +2547,10 @@ class Manager:
         if enabled and self.portmap is None and self.port:
             opts = dict(on_change=self._reannounce)
             opts.update(self.portmap_opts)
+            if self.ipv6 and "ports6" not in opts:    # IPv6: ask the router's firewall to let peers in
+                m6 = self.udp.get(socket.AF_INET6)
+                u6 = m6.transport.get_extra_info("sockname")[1] if m6 else 0
+                opts["ports6"] = [("TCP", self.port)] + ([("UDP", u6)] if u6 else [])
             self.portmap = portmap.PortMapper([("TCP", self.port), ("UDP", self.udp_port or self.port)], **opts)
             self.portmap.start()
         elif not enabled and self.portmap is not None:
@@ -2567,6 +2581,19 @@ class Manager:
         fam = socket.AF_INET6 if _is_v6(ip) else socket.AF_INET
         return next((d for d in self.dhts if d.family == fam), None)
 
+    def _inbound6_udp(self, addr):
+        if _global_ip(addr[0]):
+            self.inbound6["udp"] += 1
+
+    def ipv6_reachable(self):
+        """True: peers on the Internet reach us over IPv6. False: nothing came in although we have been
+        busy long enough that something should have (the router's firewall blocks it). None: too early to say."""
+        if sum(self.inbound6.values()):
+            return True
+        d6 = self.dht_for("::1")
+        busy = time.time() - self.started > 900 and d6 is not None and len(d6.nodes) >= 20
+        return False if busy else None
+
     def ipv6_status(self):
         """Short text for Settings / Diagnostics."""
         if not self.ipv6_wanted:
@@ -2574,7 +2601,21 @@ class Manager:
         if not self.ipv6:
             return "not available on this computer"
         a = ipv6_address()
-        return ("on (%s)" % a) if a else "on, but this network has no IPv6 Internet"
+        if not a:
+            return "on, but this network has no IPv6 Internet"
+        txt = "on (%s)" % a
+        reach = self.ipv6_reachable()
+        if reach:
+            txt += "; peers can reach you (%d incoming connection(s), %d packet(s))" % (
+                self.inbound6["tcp"], self.inbound6["udp"])
+        elif reach is False:
+            txt += "; nothing has come in yet, so the router's IPv6 firewall is probably blocking incoming connections"
+        else:
+            txt += "; checking whether peers can reach you"
+        pm = self.portmap
+        if pm is not None and getattr(pm, "status6", ""):
+            txt += "\nIPv6 firewall: %s" % pm.status6
+        return txt
 
     def family_ok(self, ip):
         """Can we reach this address (IPv6 needs our IPv6 listener / sockets)?"""
@@ -2630,6 +2671,8 @@ class Manager:
             addr = tuple(w.get_extra_info("peername")[:2])
             if addr[0] in self.banned:
                 raise ValueError("banned")
+            if _is_v6(addr[0]) and _global_ip(addr[0]) and w.get_extra_info("socket") is not None:
+                self.inbound6["tcp"] += 1     # TCP (a uTP SYN already counted as a packet)
             first = await asyncio.wait_for(r.readexactly(20), 10)
             if first == PSTR:  # plaintext BitTorrent handshake
                 if self.encryption == "require":
