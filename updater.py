@@ -1,7 +1,7 @@
 """Automatic updates from GitHub Releases.
 
-Installers are published to a separate *public* repository that holds only releases (the source repository stays
-private; its build pushes each release there with a token kept in GitHub's secrets, never in the app). The app asks
+Installers are published to a separate *public* repository that holds only releases (the source repository is
+public too; its build pushes each release there with a token kept in GitHub's secrets, never in the app). The app asks
 that repository for its latest release, downloads the Setup .exe into the data folder, checks its size and SHA-256
 (GitHub publishes a digest for every asset), and runs it silently; the installer closes this copy with --quit and
 starts the new one afterwards (/RELAUNCH)."""
